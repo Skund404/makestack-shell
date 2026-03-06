@@ -22,7 +22,7 @@
 
 Makestack is a modular project management and ERP toolkit for makers (leatherworkers, cosplayers, woodworkers, 3D printers, cooks, etc.).
 
-**This repo (makestack-app)** is the Shell — the host application that sits between the user and everything else. It:
+**This repo (makestack-shell)** is the Shell — the host application that sits between the user and everything else. It:
 - Proxies all access to makestack-core (the catalogue engine)
 - Owns the UserDB (SQLite — personal state: inventory, workshops, preferences, module data)
 - Hosts modules (Python backend + React frontend)
@@ -1183,20 +1183,20 @@ See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
 
 ## Current State
 
-Shell: **NOT YET STARTED**
+Shell: **Phase 1 Backend Complete**
 
-- [ ] Python project initialized (pyproject.toml, requirements.txt)
-- [ ] FastAPI entry point with startup sequence
-- [ ] CatalogueClient (httpx proxy to Core)
-- [ ] UserDB schema and migration runner
-- [ ] Catalogue proxy routes
-- [ ] Inventory routes (CRUD with hash-pointer management)
-- [ ] Workshop routes (CRUD + membership)
-- [ ] Version/history routes
-- [ ] Settings routes
-- [ ] System routes (status, capabilities)
-- [ ] Degraded mode
-- [ ] Dev mode debug API
+- [x] Python project initialized (pyproject.toml, requirements.txt)
+- [x] FastAPI entry point with startup sequence
+- [x] CatalogueClient (httpx proxy to Core)
+- [x] UserDB schema and migration runner
+- [x] Catalogue proxy routes
+- [x] Inventory routes (CRUD with hash-pointer management)
+- [x] Workshop routes (CRUD + membership)
+- [x] Version/history routes
+- [x] Settings routes
+- [x] System routes (status, capabilities)
+- [x] Degraded mode (Core health-check polling; routes return 503 when Core is down)
+- [x] Dev mode debug API
 - [ ] MCP server (tool definitions, SSE + stdio transports)
 - [ ] MCP module tool auto-generation
 - [ ] React frontend initialized
@@ -1224,7 +1224,7 @@ Shell: **NOT YET STARTED**
 
 ## What's In Progress
 
-Nothing currently in progress.
+Nothing currently in progress. Ready to begin Phase 2 (MCP Server).
 
 ---
 
@@ -1361,3 +1361,42 @@ Nothing currently blocked.
 - Core API Reference expanded with implementation details from makestack-core codebase
 - Shell is proprietary (All Rights Reserved); Core remains MIT
 - Ready to begin Phase 1: Backend Foundation
+
+### 2026-03-06 — Phase 1: Backend Foundation
+Built the complete backend foundation. 98 tests, all passing.
+
+**Files created:**
+- `pyproject.toml` — Python 3.10+ project (system only has 3.10; CLAUDE.md says 3.12+ but syntax is compatible)
+- `LICENSE` — Proprietary, All Rights Reserved
+- `backend/requirements.txt`
+- `backend/app/models.py` — All Pydantic models (Primitive, Inventory, Workshop, Diff, etc.)
+- `backend/app/core_client.py` — Async httpx CatalogueClient wrapping all Core endpoints
+- `backend/app/userdb.py` — aiosqlite manager with migration runner and query helpers
+- `backend/app/dependencies.py` — FastAPI DI providers (get_core_client, get_userdb, get_dev_mode)
+- `backend/app/main.py` — FastAPI app with lifespan startup sequence, background health poll, CORS
+- `backend/app/migrations/001_initial_schema.py` — All core tables + default user seed
+- `backend/app/routers/catalogue.py` — Full Core proxy (all 10 endpoints)
+- `backend/app/routers/inventory.py` — Hash-pointer CRUD with staleness detection
+- `backend/app/routers/workshops.py` — Workshop CRUD + membership + active context
+- `backend/app/routers/settings.py` — User preferences and theme management
+- `backend/app/routers/version.py` — Standalone history/diff proxy routes
+- `backend/app/routers/modules.py` — Module list/enable/disable (Phase 5 loader TBD)
+- `backend/app/routers/system.py` — Status endpoint + full capabilities registry for MCP
+- `backend/app/routers/dev.py` — Debug API (guarded by dev mode check)
+- `backend/sdk/__init__.py` — Placeholder for Phase 5 module SDK
+- `backend/tests/conftest.py` — Fixtures: in-memory UserDB, mock CatalogueClient, ASGI test client
+- `backend/tests/test_core_client.py` — CatalogueClient unit tests with MockTransport
+- `backend/tests/test_userdb.py` — Migration runner + query helper tests
+- `backend/tests/test_catalogue_routes.py` — Route tests with mocked Core
+- `backend/tests/test_inventory_routes.py` — Full inventory lifecycle tests
+- `backend/tests/test_workshops_routes.py` — Workshop CRUD + membership tests
+- `backend/tests/test_version_routes.py` — Version proxy route tests
+
+**Key implementation notes:**
+- Python version: `>=3.10` (system has 3.10, spec says 3.12+; `str | None` and match work in 3.10)
+- Route ordering matters: `/stale` and `/active` are declared before `/{id}` to prevent routing collisions
+- `{path:path}` FastAPI converter handles slash-containing primitive paths correctly
+- Degraded mode: Core unavailability returns 503 with suggestion messages; background poll reconnects
+- `GET /api/capabilities` returns machine-readable operation list for MCP Phase 2
+- dev.py routes are always mounted but self-guard with a 403 check (avoids conditional mounting complexity)
+- `execute_returning` uses SQLite's `RETURNING *` clause (available since SQLite 3.35 / Python 3.10)
