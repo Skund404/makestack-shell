@@ -22,7 +22,7 @@
 
 Makestack is a modular project management and ERP toolkit for makers (leatherworkers, cosplayers, woodworkers, 3D printers, cooks, etc.).
 
-**This repo (makestack-app)** is the Shell — the host application that sits between the user and everything else. It:
+**This repo (makestack-shell)** is the Shell — the host application that sits between the user and everything else. It:
 - Proxies all access to makestack-core (the catalogue engine)
 - Owns the UserDB (SQLite — personal state: inventory, workshops, preferences, module data)
 - Hosts modules (Python backend + React frontend)
