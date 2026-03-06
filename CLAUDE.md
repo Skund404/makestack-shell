@@ -22,7 +22,7 @@
 
 Makestack is a modular project management and ERP toolkit for makers (leatherworkers, cosplayers, woodworkers, 3D printers, cooks, etc.).
 
-**This repo (makestack-shell)** is the Shell — the host application that sits between the user and everything else. It:
+**This repo (makestack-app)** is the Shell — the host application that sits between the user and everything else. It:
 - Proxies all access to makestack-core (the catalogue engine)
 - Owns the UserDB (SQLite — personal state: inventory, workshops, preferences, module data)
 - Hosts modules (Python backend + React frontend)
@@ -247,6 +247,13 @@ The MCP server exposes tools in these groups:
 - `call_module` — invoke a module's API endpoint (generic passthrough)
 - `get_module_data` — read data from a module's tables (via the module's own API)
 - `enable_module` / `disable_module` — toggle modules on/off
+
+**Packages / Registry**
+- `install_package` — install a module, widget pack, catalogue, or data pack by name or URL
+- `uninstall_package` — uninstall a package
+- `search_packages` — search across all registries
+- `list_packages` — list all installed packages with types and versions
+- `list_registries` — list configured registries
 
 **Settings**
 - `get_settings` — read current preferences and config
@@ -479,6 +486,24 @@ The Shell's FastAPI backend is the single source of truth for all operations. Bo
 | PUT | `/api/modules/{name}/enable` | Enable a module |
 | PUT | `/api/modules/{name}/disable` | Disable a module |
 | GET | `/modules/{name}/*` | Module-specific routes (mounted per module) |
+
+### Widgets
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/widgets` | List all registered keyword renderers (core + packs + modules) |
+| GET | `/api/widgets/packs` | List installed widget packs |
+
+### Packages (Registry)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/packages` | List all installed packages (modules, widget packs, catalogues) |
+| POST | `/api/packages/install` | Install a package by name or Git URL |
+| DELETE | `/api/packages/{name}` | Uninstall a package |
+| POST | `/api/packages/{name}/update` | Update a package to latest version |
+| GET | `/api/packages/search?q=` | Search across all registries |
+| GET | `/api/registries` | List configured registries |
+| POST | `/api/registries` | Add a registry |
+| DELETE | `/api/registries/{name}` | Remove a registry |
 
 ### System
 | Method | Endpoint | Description |
@@ -838,13 +863,210 @@ The Shell MUST start even when Core is unreachable:
 
 ---
 
-## Module System
+## Extensibility: Widgets, Modules, and Registry
 
-### Build-Time Integration (Not Hot-Loading)
+The Shell has three extension mechanisms, each with a different weight and purpose. Understanding the separation is critical — they are NOT the same thing.
 
-Module install → triggers frontend rebuild → restart Shell. No runtime module federation.
+### 1. Widgets (Frontend-Only Keyword Renderers)
+
+Widgets are **stateless, frontend-only components** invoked by JSON keywords. When a manifest contains a keyword like `TIMER_: "10min"`, the Shell's keyword renderer detects it and instantiates the corresponding widget.
+
+**Key properties:**
+- Pure React components — no Python backend, no API routes, no UserDB tables
+- No installation infrastructure — they are present at frontend build time
+- Stateless — they receive a keyword value and render it, nothing more
+- Degrade gracefully — if the renderer is absent, the raw JSON value displays as text
+- The data is already meaningful without the widget — widgets are UI enhancement, not data
+
+**Widgets come from three sources:**
+- **Core widgets** — shipped with the Shell (TIMER_, MEASUREMENT_, MATERIAL_REF_, etc.)
+- **Widget packs** — installable bundles of keyword renderers (via the registry)
+- **Module widgets** — keyword renderers registered by a full module as part of its frontend
+
+A widget pack is just a Git repo containing React components and a manifest declaring which keywords they render. Installing a widget pack triggers a frontend rebuild but does NOT require a Shell restart — no backend is involved.
+
+```
+makestack-widget-pack-timers/
+├── makestack-package.json       # type: "widget-pack", declares keywords
+├── components/
+│   ├── Timer.tsx                # Renders TIMER_
+│   ├── Countdown.tsx            # Renders COUNTDOWN_
+│   └── Stopwatch.tsx            # Renders STOPWATCH_
+└── index.ts                     # Exports keyword → component map
+```
+
+### 2. Modules (Full-Stack Extensions)
+
+Modules are **full-stack extensions** (Python backend + React frontend) that add domain features to the Shell. They are fundamentally heavier than widgets.
+
+**What modules can do that widgets cannot:**
+- Own backend API routes (mounted at `/modules/{name}/`)
+- Declare and migrate UserDB tables (personal data storage)
+- Access the catalogue via the SDK's CatalogueClient
+- Write to `meta` namespaces on catalogue primitives
+- Register panels, sidebar entries, and pages (not just keyword renderers)
+- Have configuration files (`.makestack/modules/{name}.config.json`)
+- Declare peer dependencies on other modules
+- Be invoked via MCP tools
+
+**Examples:** Inventory, Cost Tracker, CRM, Supplier Management, CNC Feeds & Speeds, Export Engine.
+
+A module CAN also register keyword renderers — but that's a module providing widgets as part of its larger feature set, not a standalone widget.
+
+**Module install flow:**
+1. Resolve via registry → Git URL → clone to package cache
+2. Dependency check (strict for Python, permissive for Node)
+3. Install Python dependencies
+4. Install Node dependencies (if has_frontend)
+5. Register in `installed_modules` table
+6. Run UserDB migrations
+7. Frontend rebuild (includes module's keyword renderers and panels)
+8. Shell restart required
+
+```
+makestack-module-inventory/
+├── makestack-package.json       # type: "module"
+├── manifest.json                # Module contract (keywords, endpoints, tables, permissions)
+├── backend/
+│   ├── __init__.py
+│   ├── routes.py                # FastAPI router
+│   ├── services.py
+│   └── migrations/
+│       └── 001_create_stock_table.py
+├── frontend/
+│   ├── components/
+│   │   └── StockBadge.tsx       # Keyword renderer (this is a widget provided BY a module)
+│   ├── keywords.ts
+│   └── index.ts
+└── tests/
+```
+
+### 3. Registry / Package Manager (Git-Native)
+
+The registry is a **Git-native package manager** built into the Shell. It is the mechanism by which Makestack proliferates — not an afterthought, but a core feature.
+
+**Two-level architecture:**
+
+```
+┌──────────────────────────────────────┐
+│  PRIMARY INDEX                       │
+│  (Single Git repo, maintained by     │
+│   project maintainer)                │
+│                                      │
+│  Lists every known registry:         │
+│  - Official registry                 │
+│  - Community registries              │
+│  - Domain-specific registries        │
+│  - Third-party registries            │
+│                                      │
+│  This is the discovery layer.        │
+│  A developer publishes a package,    │
+│  submits a PR to the primary index,  │
+│  and every Makestack user can find it│
+└──────────────────┬───────────────────┘
+                   │
+        ┌──────────▼──────────┐
+        │  REGISTRIES         │
+        │  (Git repos, each   │
+        │   maintained by     │
+        │   their owner)      │
+        │                     │
+        │  Maps package names │
+        │  to Git URLs and    │
+        │  version tags       │
+        └──────────┬──────────┘
+                   │
+        ┌──────────▼──────────┐
+        │  PACKAGES           │
+        │  (Git repos)        │
+        │                     │
+        │  Four types:        │
+        │  - Modules          │
+        │  - Widget packs     │
+        │  - Catalogues       │
+        │  - Data             │
+        └─────────────────────┘
+```
+
+**Primary index** (index of registries):
+```json
+{
+  "registries": {
+    "official": {
+      "git": "https://github.com/makestack/registry",
+      "description": "Official Makestack packages"
+    },
+    "community-leather": {
+      "git": "https://github.com/leather-community/makestack-registry",
+      "description": "Community leatherwork packages"
+    }
+  }
+}
+```
+
+**Registry** (index of packages):
+```json
+{
+  "packages": {
+    "inventory-stock": {
+      "git": "https://github.com/makestack/makestack-module-inventory",
+      "type": "module"
+    },
+    "timer-widgets": {
+      "git": "https://github.com/makestack/makestack-widgets-timer",
+      "type": "widget-pack"
+    },
+    "leatherwork-catalogue": {
+      "git": "https://github.com/makestack/makestack-catalogue-leatherwork",
+      "type": "catalogue"
+    }
+  }
+}
+```
+
+**Package manifest** (`makestack-package.json`, in the package repo):
+```json
+{
+  "name": "inventory-stock",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Track material quantities, locations, and stock status",
+  "shell_compatibility": ">=0.1.0"
+}
+```
+
+The `type` in the registry is a hint for discovery. The `makestack-package.json` in the repo is authoritative.
+
+**Four installable types, four install handlers:**
+
+| Type | Install target | What happens | Restart? |
+|------|---------------|-------------|----------|
+| `module` | Shell Python env + UserDB + frontend | Dependency check → pip install → migrations → mount routes → rebuild frontend | Yes |
+| `widget-pack` | Frontend build only | Copy components → rebuild frontend | No (hot-reload in dev) |
+| `catalogue` | Core's data repo via Core API | POST each primitive to Core (or git merge). User chooses: merge all, cherry-pick, or preview | No |
+| `data` | Configurable target | Themes → `.makestack/themes/`. Presets → `.makestack/`. Generic → user-specified | No |
+
+**Versioning:** Git tags (`v1.0.0`, `v1.1.0`). Shell resolves `latest` to highest semver tag. Pinning: `makestack install inventory-stock@1.2.0`. Package cache stores the cloned repo; switching versions is `git checkout`.
+
+**CLI:**
+```bash
+makestack install inventory-stock              # Resolve via registry, install
+makestack install inventory-stock@1.2.0        # Pin to version
+makestack install https://github.com/you/repo  # Direct Git URL (bypass registry)
+makestack install ./local-path                 # Local path (dev)
+makestack uninstall inventory-stock
+makestack update inventory-stock
+makestack search "leather"                     # Search across all registries
+makestack registry add https://github.com/someone/their-registry
+makestack registry list
+makestack registry remove community-leather
+```
+
+**Key principle:** Any Git host works — GitHub, GitLab, Codeberg, self-hosted Gitea. No vendor lock-in. The registry is just a JSON file in a Git repo.
 
 ### Module SDK (5 Surfaces)
+
+Available only to modules (not widgets):
 
 1. **CatalogueClient** — typed proxy to Core (read, search, write, history, diff)
 2. **UserDB** — scoped access to module's own tables only
@@ -904,17 +1126,23 @@ See **05-DESIGN-SYSTEM.md** for full details.
 
 ---
 
-## Key Keyword Concepts
+## Keywords and Widgets
+
+JSON manifests contain special keywords (uppercase, trailing underscore) that the Shell's keyword renderer resolves to **widgets** — stateless React components:
 
 ```json
-{ "TIMER_": "30min" }        → renders countdown timer
-{ "MEASUREMENT_": "4mm" }    → renders measurement with unit conversion
+{ "TIMER_": "30min" }        → renders countdown timer widget
+{ "MEASUREMENT_": "4mm" }    → renders measurement widget with unit conversion
 ```
 
-- Core keywords: TIMER_, MEASUREMENT_, MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_, IMAGE_, LINK_, NOTE_, CHECKLIST_
-- Module keywords: prefixed with module name (e.g., INVENTORY_STOCK_)
-- Unknown keywords display as raw text (graceful degradation)
-- Detection: regex `^[A-Z][A-Z0-9_]*_$` on JSON keys
+**Three sources of keyword renderers (all are widgets):**
+- **Core widgets** (shipped with Shell): TIMER_, MEASUREMENT_, MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_, IMAGE_, LINK_, NOTE_, CHECKLIST_
+- **Widget packs** (installed via registry): standalone frontend-only bundles, no backend
+- **Module widgets** (registered by modules): keyword renderers that are part of a full-stack module (e.g., INVENTORY_STOCK_ from the inventory module)
+
+**Resolution order:** Module widgets override widget pack widgets override core widgets (for the same keyword). Unknown keywords display as raw text (graceful degradation).
+
+**Detection:** regex `^[A-Z][A-Z0-9_]*_$` on JSON keys.
 
 See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
 
@@ -924,9 +1152,19 @@ See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
 
 ```
 ~/.makestack/                    # Shell's local state (not in Git)
-├── userdb.sqlite
-├── cache/
-└── logs/
+├── userdb.sqlite                # UserDB — all personal state
+├── cache/                       # Catalogue proxy cache
+├── packages/                    # Package cache (cloned Git repos)
+│   ├── modules/
+│   │   └── inventory-stock/     # Cloned module repo
+│   ├── widgets/
+│   │   └── timer-widgets/       # Cloned widget pack repo
+│   └── catalogues/
+│       └── leatherwork/         # Cloned catalogue repo
+├── registries/                  # Cloned registry repos
+│   ├── official/
+│   └── community-leather/
+└── logs/                        # Log files (production mode)
 
 <data-repo>/                     # Managed by Core (Git)
 ├── .makestack/
@@ -966,15 +1204,19 @@ Shell: **NOT YET STARTED**
 - [ ] Layout (sidebar, header, navigation, workshop switcher)
 - [ ] Catalogue browsing views
 - [ ] Primitive editing views
-- [ ] Keyword renderer registry + core renderers
+- [ ] Keyword renderer registry (core widgets + widget pack + module widget resolution)
+- [ ] Core widget implementations (TIMER_, MEASUREMENT_, MATERIAL_REF_, etc.)
 - [ ] Version timeline and diff viewer
 - [ ] Inventory views
 - [ ] Workshop management views
 - [ ] Settings views
+- [ ] Widget pack loader (frontend-only, no restart)
 - [ ] Module SDK package
-- [ ] Module loader
-- [ ] Frontend module integration
-- [ ] CLI (start, dev, mcp, module management, export/import)
+- [ ] Module loader (discovery, validation, mounting)
+- [ ] Frontend module integration (build-time component registry)
+- [ ] Registry client (resolve packages from registries, clone to cache)
+- [ ] Package installer (type-specific handlers: module, widget-pack, catalogue, data)
+- [ ] CLI (start, dev, mcp, install/uninstall, registry management, export/import)
 - [ ] docker-compose.yml
 - [ ] Tests
 
@@ -1018,45 +1260,59 @@ Nothing currently blocked.
 19. stdio transport + `makestack mcp` CLI command
 20. MCP integration tests
 
-### Phase 3: Frontend Foundation
+### Phase 3: Frontend Foundation + Core Widgets
 21. Vite + React + TanStack Router + TanStack Query setup
 22. Theme loader — read theme JSON, inject CSS custom properties
 23. Tailwind config — map CSS variables to Tailwind tokens
 24. `@makestack/ui` — Radix UI wrappers
 25. Layout — sidebar, header, workspace switcher, navigation
-26. Catalogue list view — browse by type, search
-27. Catalogue detail view — show primitive with keyword rendering
-28. Core keyword renderers
-29. Version timeline + diff viewer components
-30. Primitive create/edit views
+26. Keyword renderer registry — resolution chain (module → widget pack → core)
+27. Core widget implementations (TIMER_, MEASUREMENT_, MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_, IMAGE_, LINK_, NOTE_, CHECKLIST_)
+28. Catalogue list view — browse by type, search
+29. Catalogue detail view — show primitive with keyword/widget rendering
+30. Version timeline + diff viewer components
+31. Primitive create/edit views
 
 ### Phase 4: Personal State
-31. Inventory views — add to inventory, browse, version tracking
-32. Workshop management views
-33. Settings views — preferences, theme switching
+32. Inventory views — add to inventory, browse, version tracking
+33. Workshop management views
+34. Settings views — preferences, theme switching
 
 ### Phase 5: Module System
-34. Module SDK package
-35. Module loader — discovery, validation, migration running, router mounting
-36. Frontend module integration — build-time component registry
-37. MCP tool auto-generation wired to module loader
-38. Dev mode — debug API, keyword playground, schema inspector
-39. CLI — `makestack start`, `makestack dev`, `makestack module create/install/uninstall`
+35. Module SDK package (catalogue client, userdb, config, context, peers, logger, testing mocks)
+36. Module loader — discovery, manifest validation, migration running, router mounting
+37. Frontend module integration — build-time keyword renderer + panel registration
+38. Widget pack loader — frontend-only install, no restart
+39. MCP tool auto-generation wired to module loader
+40. Dev mode — debug API, keyword playground, schema inspector
+41. CLI — `makestack start`, `makestack dev`, `makestack module create`
 
-### Phase 6: Polish
-40. Degraded mode — Core health check, cache, graceful degradation
-41. Export/import — UserDB portable JSON format
-42. docker-compose.yml — Core + Shell orchestration
-43. Error boundaries per module
-44. Production logging
+### Phase 6: Registry / Package Manager (Architecture Designed, Implementation Here)
+42. Registry client — fetch registries, resolve package names to Git URLs
+43. Package cache manager — clone, version-switch, update via Git
+44. Type-specific install handlers (module, widget-pack, catalogue, data)
+45. CLI — `makestack install/uninstall/update/search`, `makestack registry add/list/remove`
+46. Primary index integration — discover registries from the primary index
+
+### Phase 7: Polish
+47. Degraded mode — Core health check, cache, graceful degradation
+48. Export/import — UserDB portable JSON format
+49. docker-compose.yml — Core + Shell orchestration
+50. Error boundaries per module
+51. Production logging
 
 ---
 
 ## Decisions Made
 
 - **Licensing: Shell is proprietary (All Rights Reserved).** Core (makestack-core) is MIT open-source. The Shell is private — not to be published, distributed, or used by others without explicit permission. This split is intentional: the catalogue engine is open, the application layer is not. Modules will have their own licensing (TBD per module).
+- **Three extension types: Widgets, Modules, Registry.** These are fundamentally different things with different install flows, different capabilities, and different weights.
+- **Widgets are stateless, frontend-only, no install infrastructure.** They are pure UI enhancement on data that is already meaningful without them. They degrade to raw text gracefully.
+- **Modules are full-stack extensions** with backend routes, UserDB tables, and optional frontend. They are the heavy-weight extension mechanism.
+- **Registry is Git-native, two-level.** Primary index → registries → packages. No npm/PyPI dependency. Any Git host works.
+- **Four installable package types:** modules, widget-packs, catalogues, data. Each has its own install handler with different targets and restart requirements.
+- **Widget packs do NOT require Shell restart** (frontend-only rebuild). Modules DO require restart.
 - Shell is Python/FastAPI + React (not Go, not Next.js, not Electron)
-- Build-time module loading (not hot-loading)
 - Backend dependency validation is STRICT; frontend is PERMISSIVE
 - UserDB is SQLite via aiosqlite
 - Module tables are typed with real columns (not key-value), FK to inventory
@@ -1093,6 +1349,15 @@ Nothing currently blocked.
 
 ### 2026-03-06 — Project Setup
 - Created CLAUDE.md with MCP integration as core architectural principle
-- Shell development not yet started — Core is feature-complete, specs are complete
 - MCP designed as thin translation layer over Shell REST API
+
+### 2026-03-06 — Extensibility Architecture
+- Established three-tier extension model: Widgets (frontend-only keyword renderers), Modules (full-stack extensions), Registry (Git-native package manager)
+- Widgets are stateless, no backend, no install infrastructure, degrade gracefully
+- Modules are full-stack with routes, UserDB tables, and optional frontend
+- Registry is two-level Git-native: primary index → registries → packages
+- Four installable package types: module, widget-pack, catalogue, data — each with type-specific install handler
+- Registry architecture fully designed, implementation deferred to Phase 6
+- Core API Reference expanded with implementation details from makestack-core codebase
+- Shell is proprietary (All Rights Reserved); Core remains MIT
 - Ready to begin Phase 1: Backend Foundation
