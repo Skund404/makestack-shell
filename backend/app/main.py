@@ -231,6 +231,11 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(dev.router)  # Only active in dev mode; the router self-guards.
 
+    # Mount MCP SSE endpoint at /mcp — AI agents connect here.
+    # The SSE endpoint is available at /mcp/sse.
+    from mcp_server.transport import create_sse_app
+    app.mount("/mcp", create_sse_app())
+
     return app
 
 

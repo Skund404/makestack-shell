@@ -261,6 +261,13 @@ class ThemeSet(BaseModel):
     name: str
 
 
+class ThemeData(BaseModel):
+    """Full theme CSS variable map, used by the frontend theme loader."""
+
+    name: str
+    variables: dict[str, str]  # CSS variable name → value
+
+
 # ---------------------------------------------------------------------------
 # Module models
 # ---------------------------------------------------------------------------

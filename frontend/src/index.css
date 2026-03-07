@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/* -----------------------------------------------------------------------
+   Makestack CSS custom properties — Cyberpunk default theme
+   These are overridden at runtime by the theme loader (src/theme/loader.ts)
+   when a different theme is active.
+   ----------------------------------------------------------------------- */
+:root {
+  --ms-bg:              #09090f;
+  --ms-bg-secondary:    #11111e;
+  --ms-surface:         #16162a;
+  --ms-surface-el:      #1e1e38;
+  --ms-accent:          #00e5ff;
+  --ms-accent-dim:      rgba(0, 229, 255, 0.12);
+  --ms-accent-border:   rgba(0, 229, 255, 0.25);
+  --ms-purple:          #bf5fff;
+  --ms-text:            #e2e8f0;
+  --ms-text-muted:      #8892aa;
+  --ms-text-faint:      #4a5168;
+  --ms-border:          #1a1a30;
+  --ms-border-bright:   #2a2d4a;
+  --ms-success:         #00e676;
+  --ms-warning:         #ffd600;
+  --ms-danger:          #ff1744;
+  --ms-radius:          0.375rem;
+}
+
+/* -----------------------------------------------------------------------
+   Tailwind v4 theme — maps our CSS vars to Tailwind utility classes
+   bg-bg, bg-surface, text-text, text-text-muted, text-accent, etc.
+   ----------------------------------------------------------------------- */
+@theme inline {
+  --color-bg:             var(--ms-bg);
+  --color-bg-secondary:   var(--ms-bg-secondary);
+  --color-surface:        var(--ms-surface);
+  --color-surface-el:     var(--ms-surface-el);
+  --color-accent:         var(--ms-accent);
+  --color-accent-dim:     var(--ms-accent-dim);
+  --color-accent-border:  var(--ms-accent-border);
+  --color-purple:         var(--ms-purple);
+  --color-text:           var(--ms-text);
+  --color-text-muted:     var(--ms-text-muted);
+  --color-text-faint:     var(--ms-text-faint);
+  --color-border:         var(--ms-border);
+  --color-border-bright:  var(--ms-border-bright);
+  --color-success:        var(--ms-success);
+  --color-warning:        var(--ms-warning);
+  --color-danger:         var(--ms-danger);
+
+  --font-sans: "Lexend", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --radius: var(--ms-radius);
+}
+
+/* -----------------------------------------------------------------------
+   Base resets
+   ----------------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--ms-bg);
+  color: var(--ms-text);
+  font-family: "Lexend", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ms-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ms-border-bright);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ms-text-faint);
+}
+
+/* Selection */
+::selection {
+  background: var(--ms-accent-dim);
+  color: var(--ms-accent);
+}
+
+/* Code/mono */
+code, pre, kbd {
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* Links */
+a {
+  color: var(--ms-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}

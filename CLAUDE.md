@@ -1183,7 +1183,7 @@ See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
 
 ## Current State
 
-Shell: **Phase 1 Backend Complete**
+Shell: **Phase 3 Frontend Foundation Complete**
 
 - [x] Python project initialized (pyproject.toml, requirements.txt)
 - [x] FastAPI entry point with startup sequence
@@ -1193,20 +1193,22 @@ Shell: **Phase 1 Backend Complete**
 - [x] Inventory routes (CRUD with hash-pointer management)
 - [x] Workshop routes (CRUD + membership)
 - [x] Version/history routes
-- [x] Settings routes
+- [x] Settings routes (+ GET /api/settings/theme/data returning CSS variable map)
 - [x] System routes (status, capabilities)
 - [x] Degraded mode (Core health-check polling; routes return 503 when Core is down)
 - [x] Dev mode debug API
-- [ ] MCP server (tool definitions, SSE + stdio transports)
-- [ ] MCP module tool auto-generation
-- [ ] React frontend initialized
-- [ ] Theme loader
-- [ ] Layout (sidebar, header, navigation, workshop switcher)
-- [ ] Catalogue browsing views
-- [ ] Primitive editing views
-- [ ] Keyword renderer registry (core widgets + widget pack + module widget resolution)
-- [ ] Core widget implementations (TIMER_, MEASUREMENT_, MATERIAL_REF_, etc.)
-- [ ] Version timeline and diff viewer
+- [x] MCP server (tool definitions, SSE + stdio transports)
+- [x] MCP module tool auto-generation (placeholder — wired in Phase 5)
+- [x] React frontend initialized (Vite + React 18 + TanStack Router + TanStack Query + Tailwind v4)
+- [x] Theme loader (fetches /api/settings/theme/data, injects CSS custom properties; 4 built-in themes)
+- [x] Layout (sidebar, header, navigation)
+- [x] `@makestack/ui` component library (Badge, Button, Card, Dialog, DropdownMenu, Input, ScrollArea, Select, Separator, Tabs, Tooltip, Textarea)
+- [x] Catalogue browsing views (list with type tabs, pagination)
+- [x] Primitive detail view (properties, steps, relationships, version history inline)
+- [x] Primitive create/edit views
+- [x] Keyword renderer registry (resolution chain: module → pack → core → raw text)
+- [x] Core widget implementations (TIMER_, MEASUREMENT_, MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_, IMAGE_, LINK_, NOTE_, CHECKLIST_)
+- [x] Version timeline and diff viewer (VersionTimeline, DiffViewer, VersionBadge, VersionCompare)
 - [ ] Inventory views
 - [ ] Workshop management views
 - [ ] Settings views
@@ -1224,7 +1226,7 @@ Shell: **Phase 1 Backend Complete**
 
 ## What's In Progress
 
-Nothing currently in progress. Ready to begin Phase 2 (MCP Server).
+Nothing currently in progress. Ready to begin Phase 4 (Personal State — Inventory, Workshop, Settings views).
 
 ---
 
@@ -1361,6 +1363,99 @@ Nothing currently blocked.
 - Core API Reference expanded with implementation details from makestack-core codebase
 - Shell is proprietary (All Rights Reserved); Core remains MIT
 - Ready to begin Phase 1: Backend Foundation
+
+### 2026-03-07 — Phase 2: MCP Server
+Built the complete MCP server. 25 new tests; 123 total, all passing.
+
+**Files created:**
+- `mcp_server/__init__.py`
+- `mcp_server/server.py` — `create_server(api_client?)` factory using FastMCP; accepts optional httpx client for testability
+- `mcp_server/__main__.py` — stdio entry point (`python -m mcp_server`)
+- `mcp_server/transport.py` — `create_sse_app()` returns Starlette app for mounting in FastAPI
+- `mcp_server/tool_generator.py` — placeholder for Phase 5 module tool auto-generation
+- `mcp_server/tools/__init__.py`
+- `mcp_server/tools/catalogue.py` — 7 tools: search_catalogue, list_primitives, get_primitive, create_primitive, update_primitive, delete_primitive, get_relationships
+- `mcp_server/tools/inventory.py` — 6 tools: add_to_inventory, list_inventory, get_inventory_item, check_inventory_updates, update_inventory_pointer, remove_from_inventory
+- `mcp_server/tools/workshops.py` — 8 tools: list/get/create/update/delete_workshop, add/remove_from_workshop, set_active_workshop
+- `mcp_server/tools/version.py` — 3 tools: get_primitive_history, compare_versions, get_primitive_at_version
+- `mcp_server/tools/settings.py` — 4 tools: get_settings, update_settings, get_theme, set_theme
+- `mcp_server/tools/modules.py` — 4 tools: list_modules, enable_module, disable_module, call_module
+- `mcp_server/tools/system.py` — 2 tools: get_status, get_capabilities
+- `cli/__init__.py`, `cli/commands/__init__.py`, `cli/commands/mcp.py` — `makestack mcp` entry point
+- `backend/tests/test_mcp_server.py` — 25 integration tests
+
+**Files modified:**
+- `backend/app/main.py` — mounts MCP SSE app at `/mcp` via `app.mount("/mcp", create_sse_app())`
+- `backend/requirements.txt` + `pyproject.toml` — added `mcp>=1.0.0`
+
+**Key implementation notes:**
+- Uses `FastMCP` from `mcp.server.fastmcp` (not low-level `mcp.server.Server`)
+- Tools registered via `@mcp.tool()` decorator inside `register_tools(mcp, api)` functions — clean separation per domain
+- All tools return JSON strings via `json.dumps(resp.json(), indent=2)` — AI gets full structured data
+- Exception handling wraps every API call; errors returned as JSON with suggestion field
+- `create_server(api_client=None)` accepts injected client for test isolation (ASGI transport)
+- mcp 1.26.0 `call_tool()` returns `(list[ContentBlock],)` tuple — tests unwrap accordingly
+- stdio transport responds correctly to MCP `initialize` handshake
+- SSE endpoint at `/mcp/sse`
+
+### 2026-03-07 — Phase 3: Frontend Foundation + Core Widgets
+
+Built the complete React frontend. Build passes cleanly (`tsc -b && vite build`), 123 backend tests still pass.
+
+**Files created (frontend/):**
+- `vite.config.ts` — Tailwind v4 plugin, `@` path alias, API proxy to `:3000`
+- `tsconfig.app.json` — added `paths: { "@/*": ["./src/*"] }`
+- `index.html` — Google Fonts (Lexend + JetBrains Mono), title
+- `src/index.css` — Cyberpunk CSS custom properties (`--ms-*`), `@theme inline` mapping to Tailwind token names, base resets
+- `src/theme/tokens.ts` — `ThemeData` type, `ThemeName` union
+- `src/theme/loader.ts` — fetches `/api/settings/theme/data`, injects CSS vars on `:root`
+- `src/lib/api.ts` — `apiGet/Post/Put/Delete`, `ApiError` class
+- `src/lib/keyword-detect.ts` — `isKeyword()`, `extractKeywords()`, `parseDuration()`, `formatDuration()`
+- `src/lib/utils.ts` — `cn()`, `formatDate()`, `formatDateTime()`, `primitiveTypeBg()`, `abbreviateHash()`
+- `src/lib/types.ts` — TypeScript types matching Shell Pydantic models (Primitive, PaginatedList, etc.)
+- `src/modules/keyword-resolver.ts` — 3-layer registry (core/pack/module), `registerKeyword()`, `resolveKeyword()`
+- `src/hooks/use-catalogue.ts` — `usePrimitiveList`, `usePrimitive`, `useSearch`, `useRelationships`, `useCreatePrimitive`, `useUpdatePrimitive`, `useDeletePrimitive`
+- `src/hooks/use-version.ts` — `usePrimitiveHistory`, `usePrimitiveDiff`
+- `src/components/ui/` — Badge, Button, Card (+Header/Body/Footer), Dialog, DropdownMenu, Input (+Textarea), ScrollArea, Select, Separator, Tabs, Tooltip + barrel index.ts
+- `src/components/layout/Sidebar.tsx` — nav sections (Catalogue, Personal, System), disabled items with Phase 4 tooltip
+- `src/components/layout/Header.tsx` — breadcrumb, search bar with navigate-on-submit
+- `src/components/layout/Layout.tsx` — sidebar + header + `<Outlet />`
+- `src/components/keywords/TimerWidget.tsx` — countdown timer with play/pause/reset, progress bar
+- `src/components/keywords/MeasurementWidget.tsx` — unit display with toggle conversion (mm↔in, g↔oz, etc.)
+- `src/components/keywords/RefWidget.tsx` — fetches primitive, renders compact card with navigate (shared for MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_)
+- `src/components/keywords/ImageWidget.tsx` — img with optional caption
+- `src/components/keywords/LinkWidget.tsx` — external link with icon
+- `src/components/keywords/NoteWidget.tsx` — info/warning/tip callout with icon
+- `src/components/keywords/ChecklistWidget.tsx` — interactive checkbox list (local state)
+- `src/components/keywords/KeywordValue.tsx` — resolves keyword → renderer, falls back to raw text
+- `src/components/keywords/index.ts` — `registerCoreWidgets()` function
+- `src/components/version/VersionBadge.tsx` — current/up-to-date/update-available badge
+- `src/components/version/VersionTimeline.tsx` — scrollable commit list, click to navigate `?at=hash`
+- `src/components/version/DiffViewer.tsx` — two-column before/after field diff
+- `src/components/version/VersionCompare.tsx` — two selects + DiffViewer
+- `src/components/catalogue/PrimitiveCard.tsx` — card for list view
+- `src/components/catalogue/PropertyRenderer.tsx` — renders properties with keyword detection
+- `src/components/catalogue/StepRenderer.tsx` — numbered steps with inline keyword rendering
+- `src/components/catalogue/RelationshipsPanel.tsx` — relationship list with navigation
+- `src/components/catalogue/PrimitiveForm.tsx` — shared create/edit form (type, name, desc, tags, steps, properties, relationships)
+- `src/routes/catalogue/index.tsx` — `CatalogueIndex` — type tabs + paginated grid
+- `src/routes/catalogue/search.tsx` — `CatalogueSearch` — debounced search input + results
+- `src/routes/catalogue/create.tsx` — `CatalogueCreate` — PrimitiveForm → POST → navigate to detail
+- `src/routes/catalogue/detail.tsx` — `CatalogueDetail` — full detail view with collapsible sections, delete dialog, version history
+- `src/routes/catalogue/edit.tsx` — `CatalogueEdit` — loads primitive, PrimitiveForm → PUT → navigate to detail
+- `src/router.tsx` — TanStack Router code-based routing; all routes use `validateSearch` for typed params
+- `src/App.tsx` — `RouterProvider`
+- `src/main.tsx` — `QueryClientProvider`, `loadTheme()`, `registerCoreWidgets()`, mount
+
+**Files modified (backend/):**
+- `backend/app/models.py` — added `ThemeData` model
+- `backend/app/routers/settings.py` — added `GET /api/settings/theme/data` returning CSS variable maps for 4 built-in themes (cyberpunk, workshop, daylight, high-contrast)
+
+**Key implementation notes:**
+- Tailwind v4 with `@theme inline {}` — all color utilities reference `var(--ms-*)` CSS custom properties set at runtime by theme loader
+- TanStack Router v1 code-based routing — `validateSearch` return type is strict; `at: undefined` must be passed explicitly when navigating to `/catalogue/detail`
+- `erasableSyntaxOnly: true` in tsconfig requires class properties declared explicitly, not via constructor parameter shorthand
+- Route components defined inline in `router.tsx` (not in separate files) to access `useSearch()` with the correct typed route reference
 
 ### 2026-03-06 — Phase 1: Backend Foundation
 Built the complete backend foundation. 98 tests, all passing.
