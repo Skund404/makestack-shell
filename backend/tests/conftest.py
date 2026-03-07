@@ -97,6 +97,7 @@ def mock_core() -> MagicMock:
     """Return a fully mocked CatalogueClient with sensible default returns."""
     client = MagicMock(spec=CatalogueClient)
     client.connected = True
+    client.cache_size = 0
     client._base_url = "http://localhost:8420"
 
     # Wire up async methods with AsyncMock.
@@ -130,6 +131,7 @@ async def test_app(db: UserDB, mock_core: MagicMock) -> FastAPI:
     application.state.userdb = db
     application.state.core_client = mock_core
     application.state.core_connected = True
+    application.state.last_core_check = "2026-03-07T00:00:00+00:00"
     application.state.dev_mode = True
     application.state.config = {"core_url": "http://localhost:8420"}
 

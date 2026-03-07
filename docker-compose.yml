@@ -1,0 +1,61 @@
+# Makestack full-stack docker-compose
+#
+# Starts both Core (catalogue engine) and Shell (this repo) together.
+#
+# Usage:
+#   docker-compose up                  # Start everything
+#   docker-compose up --build          # Rebuild Shell image first
+#   docker-compose logs -f shell       # Tail Shell logs
+#   docker-compose down -v             # Stop and remove volumes
+#
+# Environment variables (can also be set in a .env file):
+#   MAKESTACK_API_KEY   API key for Core→Shell auth (default: dev-key)
+#   MAKESTACK_DEV_MODE  Enable dev mode in Shell (default: false)
+
+services:
+  core:
+    image: makestack/core:latest
+    # To build Core locally (requires makestack-core checkout sibling to this repo):
+    # build: ../makestack-core
+    ports:
+      - "8420:8420"
+    volumes:
+      - makestack-data:/data
+    environment:
+      - MAKESTACK_API_KEY=${MAKESTACK_API_KEY:-dev-key}
+    command: >
+      makestack-core
+        -data /data
+        -addr :8420
+        -db /data/.makestack/index.db
+        -api-key ${MAKESTACK_API_KEY:-dev-key}
+        --public-reads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8420/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  shell:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - makestack-userdb:/home/makestack
+    environment:
+      - MAKESTACK_CORE_URL=http://core:8420
+      - MAKESTACK_CORE_API_KEY=${MAKESTACK_API_KEY:-dev-key}
+      - MAKESTACK_USERDB_PATH=/home/makestack/.makestack/userdb.sqlite
+      - MAKESTACK_DEV_MODE=${MAKESTACK_DEV_MODE:-false}
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  makestack-data:
+    driver: local
+  makestack-userdb:
+    driver: local

@@ -19,6 +19,32 @@ const queryClient = new QueryClient({
 void loadTheme()
 registerCoreWidgets()
 
+// Global error handler — catches unhandled JS errors.
+// In dev mode: reports to POST /api/dev/error for server-side logging.
+// In production: logs to console only.
+window.addEventListener('error', (event) => {
+  const isDev = import.meta.env.DEV
+  if (isDev) {
+    void fetch('/api/dev/error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: event.message,
+        stack: event.error?.stack ?? null,
+        component: null,
+        url: window.location.href,
+      }),
+    }).catch(() => {
+      // Silently ignore fetch errors in the error handler itself
+    })
+  }
+  console.error('[Makestack] Unhandled error:', event.error)
+})
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[Makestack] Unhandled promise rejection:', event.reason)
+})
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

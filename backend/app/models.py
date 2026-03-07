@@ -299,10 +299,12 @@ class SystemStatus(BaseModel):
     shell_version: str
     core_connected: bool
     core_url: str
+    last_core_check: str | None = None   # ISO 8601 timestamp of last health check
     modules_loaded: int
     modules_failed: int
     userdb_path: str
     uptime_seconds: float
+    cache_size: int = 0                  # Number of cached catalogue entries
 
 
 class CapabilityParam(BaseModel):
@@ -329,6 +331,60 @@ class CapabilitiesResponse(BaseModel):
 
     version: str
     capabilities: list[Capability]
+
+
+# ---------------------------------------------------------------------------
+# Package and registry models
+# ---------------------------------------------------------------------------
+
+
+class PackageInstallRequest(BaseModel):
+    """Request body for installing a package."""
+
+    name: str | None = None        # Package name (resolved via registry)
+    source: str | None = None      # Direct Git URL or local path
+    version: str | None = None     # Pin to specific version (None = latest)
+
+
+class InstalledPackage(BaseModel):
+    """A non-module installed package (widget-pack, catalogue, data)."""
+
+    name: str
+    type: str
+    version: str
+    git_url: str | None = None
+    package_path: str | None = None
+    installed_at: str
+    registry_name: str | None = None
+
+
+class RegistryRecord(BaseModel):
+    """A configured package registry."""
+
+    name: str
+    git_url: str
+    added_at: str
+    last_refreshed: str | None = None
+    package_count: int = 0          # Populated from the cloned index.json
+
+
+class RegistryAddRequest(BaseModel):
+    """Request body for adding a new registry."""
+
+    name: str
+    git_url: str
+
+
+class InstallResult(BaseModel):
+    """Outcome of an install or uninstall operation."""
+
+    success: bool
+    package_name: str
+    package_type: str
+    version: str
+    restart_required: bool = False
+    message: str = ""
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

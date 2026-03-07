@@ -37,10 +37,12 @@ async def get_status(
         shell_version=_SHELL_VERSION,
         core_connected=core.connected,
         core_url=getattr(request.app.state, "config", {}).get("core_url", "http://localhost:8420"),
+        last_core_check=getattr(request.app.state, "last_core_check", None),
         modules_loaded=modules_loaded,
         modules_failed=modules_failed,
         userdb_path=db.path,
         uptime_seconds=round(time.monotonic() - start_time, 1),
+        cache_size=core.cache_size,
     )
 
 
@@ -240,6 +242,65 @@ _CAPABILITIES: list[Capability] = [
         description="Disable an installed module",
         tags=["modules"],
         params=[CapabilityParam(name="name", type="string", required=True)],
+    ),
+    # Packages
+    Capability(method="GET", path="/api/packages", description="List all installed packages", tags=["packages"]),
+    Capability(
+        method="POST", path="/api/packages/install",
+        description="Install a package by registry name, Git URL, or local path",
+        tags=["packages"],
+    ),
+    Capability(
+        method="DELETE", path="/api/packages/{name}",
+        description="Uninstall a package",
+        tags=["packages"],
+        params=[CapabilityParam(name="name", type="string", required=True)],
+    ),
+    Capability(
+        method="POST", path="/api/packages/{name}/update",
+        description="Update an installed package to its latest or a specific version",
+        tags=["packages"],
+        params=[CapabilityParam(name="name", type="string", required=True)],
+    ),
+    Capability(
+        method="GET", path="/api/packages/search",
+        description="Search packages across all configured registries",
+        tags=["packages"],
+        params=[CapabilityParam(name="q", type="string", required=True, description="Search query")],
+    ),
+    # Registries
+    Capability(method="GET", path="/api/registries", description="List configured registries", tags=["packages"]),
+    Capability(method="POST", path="/api/registries", description="Add a registry", tags=["packages"]),
+    Capability(
+        method="DELETE", path="/api/registries/{name}",
+        description="Remove a registry",
+        tags=["packages"],
+        params=[CapabilityParam(name="name", type="string", required=True)],
+    ),
+    Capability(
+        method="POST", path="/api/registries/refresh",
+        description="Pull latest from all configured registries",
+        tags=["packages"],
+    ),
+    # Data export/import
+    Capability(
+        method="GET", path="/api/data/export",
+        description="Export personal data (workshops, inventory, preferences) as portable JSON",
+        tags=["data"],
+        params=[
+            CapabilityParam(name="only", type="string", required=False,
+                            description="Section: workshops, inventory, preferences, or module:<name>"),
+        ],
+    ),
+    Capability(
+        method="POST", path="/api/data/import",
+        description="Import personal data from an export document",
+        tags=["data"],
+        params=[
+            CapabilityParam(name="only", type="string", required=False),
+            CapabilityParam(name="strategy", type="string", required=False,
+                            description="additive (default), overwrite, skip_conflicts"),
+        ],
     ),
     # System
     Capability(method="GET", path="/api/status", description="Shell runtime status", tags=["system"]),

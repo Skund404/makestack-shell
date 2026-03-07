@@ -2,9 +2,15 @@
 
 All access to the Core catalogue engine goes through this class.
 The Shell is the sole client of Core; no router or module talks to Core directly.
+
+Includes an LRU cache that serves stale catalogue data when Core is unavailable.
+Cache TTLs: 300s for list/search endpoints, 1800s for individual primitives.
 """
 
+import asyncio
 import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -22,6 +28,75 @@ from .models import (
 )
 
 log = structlog.get_logger().bind(component="core_client")
+
+# ---------------------------------------------------------------------------
+# Cache configuration
+# ---------------------------------------------------------------------------
+
+_LIST_TTL = 300.0    # 5 minutes — list and search results
+_ITEM_TTL = 1800.0   # 30 minutes — individual primitives, history, diff
+_MAX_CACHE_SIZE = 500
+
+
+# ---------------------------------------------------------------------------
+# LRU Cache
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CacheEntry:
+    """A single cached API response."""
+
+    data: Any
+    cached_at: float
+    ttl: float
+
+    @property
+    def is_expired(self) -> bool:
+        """True if the entry is older than its TTL."""
+        return (time.monotonic() - self.cached_at) > self.ttl
+
+    @property
+    def age_seconds(self) -> float:
+        """Seconds since this entry was cached."""
+        return time.monotonic() - self.cached_at
+
+
+class _LRUCache:
+    """Simple LRU cache with per-entry TTL support."""
+
+    def __init__(self, max_size: int = _MAX_CACHE_SIZE) -> None:
+        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self._max_size = max_size
+
+    def get(self, key: str) -> _CacheEntry | None:
+        """Return the cache entry or None on miss. Moves hit to end (LRU order)."""
+        entry = self._cache.get(key)
+        if entry is not None:
+            self._cache.move_to_end(key)
+        return entry
+
+    def put(self, key: str, data: Any, ttl: float) -> None:
+        """Store a value. Evicts the oldest entry if over capacity."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = _CacheEntry(data=data, cached_at=time.monotonic(), ttl=ttl)
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+
+    def invalidate_prefix(self, prefix: str) -> None:
+        """Remove all entries whose key starts with prefix."""
+        stale = [k for k in self._cache if k.startswith(prefix)]
+        for k in stale:
+            del self._cache[k]
+
+    def invalidate(self, key: str) -> None:
+        """Remove a specific entry."""
+        self._cache.pop(key, None)
+
+    @property
+    def size(self) -> int:
+        return len(self._cache)
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +139,10 @@ class CatalogueClient:
 
     Accepts an optional pre-built httpx.AsyncClient for testing (dependency injection).
     In production, a client is created from base_url and api_key.
+
+    GET responses are cached with an LRU cache (max 500 entries).
+    When Core is unreachable, cached data is returned with a staleness flag.
+    Write operations (POST/PUT/DELETE) are never cached and return 503 if Core is down.
     """
 
     def __init__(
@@ -72,11 +151,13 @@ class CatalogueClient:
         api_key: str = "",
         client: httpx.AsyncClient | None = None,
         dev_mode: bool = False,
+        cache_max_size: int = _MAX_CACHE_SIZE,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._dev_mode = dev_mode
         self._connected = False
+        self._cache = _LRUCache(max_size=cache_max_size)
 
         headers: dict[str, str] = {}
         if api_key:
@@ -93,18 +174,39 @@ class CatalogueClient:
         """Whether the last health check succeeded."""
         return self._connected
 
+    @property
+    def cache_size(self) -> int:
+        """Number of entries currently in the cache."""
+        return self._cache.size
+
     async def close(self) -> None:
         """Close the underlying httpx client."""
         await self._client.aclose()
 
     # ------------------------------------------------------------------
-    # Internal request helper
+    # Internal request helpers
     # ------------------------------------------------------------------
 
-    async def _request(
+    @staticmethod
+    def _cache_key(method: str, url: str, params: dict[str, Any] | None) -> str:
+        """Build a stable cache key from method, URL, and sorted params."""
+        param_str = ""
+        if params:
+            param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        return f"{method}:{url}?{param_str}"
+
+    @staticmethod
+    def _item_ttl(url: str) -> float:
+        """Choose TTL based on whether the URL is a list/search or individual item."""
+        # List and search endpoints → shorter TTL
+        if url.rstrip("/").endswith("/primitives") or "/search" in url:
+            return _LIST_TTL
+        return _ITEM_TTL
+
+    async def _raw_request(
         self,
         method: str,
-        path: str,
+        url: str,
         *,
         params: dict[str, Any] | None = None,
         json: Any = None,
@@ -112,11 +214,10 @@ class CatalogueClient:
     ) -> Any:
         """Execute a Core API request and return parsed JSON.
 
-        Logs every request in dev mode; logs only errors and slow calls (>500 ms)
-        in production.
+        Does NOT cache. Raises CoreUnavailableError, CoreNotFoundError,
+        or CoreValidationError on error.
         """
         start = time.monotonic()
-        url = f"/api/{path.lstrip('/')}" if not path.startswith("/") else path
         try:
             resp = await self._client.request(
                 method,
@@ -155,7 +256,7 @@ class CatalogueClient:
             )
 
         if resp.status_code == 404:
-            raise CoreNotFoundError(path)
+            raise CoreNotFoundError(url)
         if resp.status_code == 400:
             body = resp.json() if resp.content else {}
             raise CoreValidationError(body.get("error", resp.text))
@@ -165,6 +266,103 @@ class CatalogueClient:
             return None
 
         return resp.json()
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any = None,
+        timeout: float = 10.0,
+    ) -> Any:
+        """Execute a Core API request with cache support for GET requests.
+
+        GET semantics:
+          - Cache hit within TTL → return immediately (fast path)
+          - Cache hit past TTL, Core connected → return immediately, refresh in background
+          - Cache hit past TTL, Core down → return stale data (logs warning)
+          - Cache miss, Core down → raise CoreUnavailableError
+          - Cache miss, Core up → fetch, cache, return
+
+        Write semantics (POST/PUT/DELETE):
+          - Invalidate cache entries for affected path prefix
+          - Raise CoreUnavailableError if Core is down (writes cannot be cached)
+        """
+        url = f"/api/{path.lstrip('/')}" if not path.startswith("/") else path
+
+        if method == "GET":
+            return await self._get_with_cache(url, params=params, timeout=timeout)
+
+        # --- Write operation: invalidate cache, pass through ---
+        # Invalidate all cached entries for this path prefix (e.g. /api/primitives)
+        path_prefix = url.split("?")[0].rsplit("/", 1)[0]
+        self._cache.invalidate_prefix(f"GET:{path_prefix}")
+        # Also invalidate the list endpoint
+        self._cache.invalidate_prefix("GET:/api/primitives")
+
+        return await self._raw_request(method, url, params=params, json=json, timeout=timeout)
+
+    async def _get_with_cache(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: float = 10.0,
+    ) -> Any:
+        """GET with stale-while-revalidate cache semantics."""
+        key = self._cache_key("GET", url, params)
+        ttl = self._item_ttl(url)
+        entry = self._cache.get(key)
+
+        # Fast path: fresh cache hit
+        if entry is not None and not entry.is_expired:
+            return entry.data
+
+        # Stale cache hit: entry exists but is expired
+        if entry is not None and entry.is_expired:
+            if self._connected:
+                # Serve stale immediately; schedule background refresh
+                asyncio.create_task(self._background_refresh(url, params, key, ttl, timeout))
+                log.debug(
+                    "cache_stale_revalidate",
+                    url=url,
+                    age_seconds=round(entry.age_seconds, 1),
+                )
+                return entry.data
+            else:
+                # Core is down — serve expired cache with a warning
+                log.warning(
+                    "cache_stale_core_down",
+                    url=url,
+                    age_seconds=round(entry.age_seconds, 1),
+                )
+                return entry.data
+
+        # Cache miss: try to fetch from Core
+        try:
+            data = await self._raw_request("GET", url, params=params, timeout=timeout)
+            self._cache.put(key, data, ttl)
+            return data
+        except CoreUnavailableError:
+            # No cache entry available — propagate
+            raise
+
+    async def _background_refresh(
+        self,
+        url: str,
+        params: dict[str, Any] | None,
+        key: str,
+        ttl: float,
+        timeout: float,
+    ) -> None:
+        """Silently refresh a cache entry in the background."""
+        try:
+            data = await self._raw_request("GET", url, params=params, timeout=timeout)
+            self._cache.put(key, data, ttl)
+            log.debug("cache_refreshed", url=url)
+        except Exception as exc:
+            log.debug("cache_refresh_failed", url=url, error=str(exc))
 
     # ------------------------------------------------------------------
     # Health

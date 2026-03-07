@@ -6,6 +6,7 @@ that are intentionally unavailable in production.
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from ..core_client import CatalogueClient
 from ..dependencies import get_core_client, get_dev_mode, get_userdb
@@ -183,4 +184,55 @@ async def dev_keywords(request: Request) -> dict:
         "total": len(result),
         "core_count": len(core_keywords),
         "module_count": len(module_keywords),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Frontend error reporting (dev mode only)
+# ---------------------------------------------------------------------------
+
+
+class FrontendError(BaseModel):
+    """A JavaScript error reported by the frontend."""
+
+    message: str
+    stack: str | None = None
+    component: str | None = None
+    url: str | None = None
+
+
+@router.post(
+    "/error",
+    summary="Report a frontend JS error",
+    status_code=204,
+    dependencies=[Depends(_require_dev)],
+)
+async def report_frontend_error(payload: FrontendError) -> None:
+    """Receive and log an unhandled frontend JavaScript error.
+
+    Only active in dev mode. In production, errors are logged to the browser
+    console only and not sent to the server.
+    """
+    log.warning(
+        "frontend_error",
+        message=payload.message,
+        component=payload.component,
+        url=payload.url,
+        stack=payload.stack,
+    )
+
+
+@router.get(
+    "/catalogue-proxy",
+    summary="Catalogue proxy cache stats",
+    dependencies=[Depends(_require_dev)],
+)
+async def dev_catalogue_proxy(
+    core: CatalogueClient = Depends(get_core_client),
+) -> dict:
+    """Return cache stats for the catalogue proxy."""
+    return {
+        "core_connected": core.connected,
+        "cache_size": core.cache_size,
+        "base_url": core._base_url,
     }

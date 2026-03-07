@@ -1,0 +1,36 @@
+# Development docker-compose override
+#
+# Mounts source code into the container for hot-reload.
+# Use this alongside the base compose file:
+#
+#   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# The Shell runs with MAKESTACK_DEV_MODE=true (debug API, verbose logging).
+# The frontend is NOT served from /dist — run 'npm run dev' locally instead
+# and point your browser to http://localhost:5173 (Vite dev server).
+
+services:
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Override CMD to use uvicorn with --reload for hot-reload
+    command: >
+      python -m uvicorn backend.app.main:app
+        --host 0.0.0.0
+        --port 3000
+        --reload
+    volumes:
+      # Mount source for hot-reload
+      - ./backend:/app/backend
+      - ./mcp_server:/app/mcp_server
+      - ./cli:/app/cli
+      # Persist UserDB between restarts
+      - makestack-userdb:/home/makestack
+    environment:
+      - MAKESTACK_CORE_URL=http://core:8420
+      - MAKESTACK_CORE_API_KEY=${MAKESTACK_API_KEY:-dev-key}
+      - MAKESTACK_USERDB_PATH=/home/makestack/.makestack/userdb.sqlite
+      - MAKESTACK_DEV_MODE=true
+    ports:
+      - "3000:3000"

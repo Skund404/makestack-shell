@@ -1,8 +1,4 @@
-"""MCP tools for module management.
-
-Module tool auto-generation from manifests is implemented in tool_generator.py
-and wired in during Phase 5 when the module loader is built.
-"""
+"""MCP tools for module management and package/registry operations."""
 
 import json
 
@@ -11,7 +7,7 @@ from mcp.server.fastmcp import FastMCP
 
 
 def register_tools(mcp: FastMCP, api: httpx.AsyncClient) -> None:
-    """Register all module management tools on the given FastMCP instance."""
+    """Register all module and package management tools on the given FastMCP instance."""
 
     @mcp.tool()
     async def list_modules() -> str:
@@ -86,3 +82,90 @@ def register_tools(mcp: FastMCP, api: httpx.AsyncClient) -> None:
             return json.dumps(resp.json(), indent=2)
         except Exception as exc:
             return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running and the module is enabled."})
+
+    # --- Package management tools -----------------------------------------
+
+    @mcp.tool()
+    async def list_packages() -> str:
+        """List all installed packages across all types (modules, widget-packs, catalogues, data).
+
+        Use this to see what is currently installed before deciding to install or uninstall.
+        """
+        try:
+            resp = await api.get("/api/packages")
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def install_package(
+        name: str | None = None,
+        source: str | None = None,
+        version: str | None = None,
+    ) -> str:
+        """Install a Makestack package.
+
+        Provide either:
+          name   — package name resolved via configured registries (e.g. 'inventory-stock')
+          source — a direct Git URL (https://...) or local directory path
+
+        version is optional; omitting it installs the latest semver tag.
+
+        Package types: module (requires restart), widget-pack, catalogue, data.
+        """
+        payload: dict = {}
+        if name:
+            payload["name"] = name
+        if source:
+            payload["source"] = source
+        if version:
+            payload["version"] = version
+
+        try:
+            resp = await api.post("/api/packages/install", json=payload)
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def uninstall_package(name: str) -> str:
+        """Uninstall an installed package.
+
+        name: the package's registered name (use list_packages to see installed packages).
+
+        For modules: the module is disabled and its DB tables are preserved.
+        For other types: the registration is removed.
+        """
+        try:
+            resp = await api.delete(f"/api/packages/{name}")
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def search_packages(query: str) -> str:
+        """Search for packages across all configured registries.
+
+        query: search term matched against package names and descriptions.
+
+        Returns matching packages with their type, description, and Git URL.
+        Use install_package with the 'name' field to install a result.
+        """
+        try:
+            resp = await api.get("/api/packages/search", params={"q": query})
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def list_registries() -> str:
+        """List all configured package registries with their package counts.
+
+        Registries are Git repos containing an index.json that maps package names
+        to Git URLs. Use add_registry to add new ones.
+        """
+        try:
+            resp = await api.get("/api/registries")
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})

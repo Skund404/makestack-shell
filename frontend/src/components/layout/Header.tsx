@@ -1,7 +1,8 @@
 import { ChevronDown, Search } from 'lucide-react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useWorkshopList, useActiveWorkshop, useSetActiveWorkshop } from '@/hooks/use-workshops'
+import { useSystemStatus } from '@/hooks/use-status'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -69,6 +70,53 @@ function WorkshopSwitcher() {
   )
 }
 
+/**
+ * Shows Core connection state as a coloured dot with a label.
+ *
+ * Green  "Connected"    — Core is reachable right now
+ * Yellow "Reconnecting" — Core was reachable this session but is now down
+ * Red    "Disconnected" — Core has never been reachable this session
+ */
+function CoreConnectionIndicator() {
+  const { data: status, isLoading } = useSystemStatus()
+  // Track whether core was ever connected in this browser session.
+  const everConnected = useRef(false)
+
+  if (isLoading || !status) return null
+
+  if (status.core_connected) {
+    everConnected.current = true
+  }
+
+  let dotColor: string
+  let label: string
+  let title: string
+
+  if (status.core_connected) {
+    dotColor = 'bg-green-500'
+    label = 'Connected'
+    title = `Core connected at ${status.core_url}`
+  } else if (everConnected.current) {
+    dotColor = 'bg-yellow-400 animate-pulse'
+    label = 'Reconnecting'
+    title = `Core disconnected — was at ${status.core_url}`
+  } else {
+    dotColor = 'bg-red-500'
+    label = 'Disconnected'
+    title = `Core unreachable at ${status.core_url}`
+  }
+
+  return (
+    <div
+      className="flex items-center gap-1.5 text-xs text-text-faint select-none"
+      title={title}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+      <span>{label}</span>
+    </div>
+  )
+}
+
 export function Header() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
@@ -85,6 +133,7 @@ export function Header() {
     <header className="h-11 shrink-0 border-b border-border bg-bg-secondary flex items-center px-4 gap-4">
       <Breadcrumb />
       <div className="flex-1" />
+      <CoreConnectionIndicator />
       <form onSubmit={handleSearch} className="relative">
         <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint pointer-events-none" />
         <input

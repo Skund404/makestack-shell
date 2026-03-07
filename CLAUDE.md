@@ -1183,7 +1183,7 @@ See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
 
 ## Current State
 
-Shell: **Phase 5 Module System Complete**
+Shell: **Phase 7 Complete — v0 Feature-Complete**
 
 - [x] Python project initialized (pyproject.toml, requirements.txt)
 - [x] FastAPI entry point with startup sequence
@@ -1228,23 +1228,128 @@ Shell: **Phase 5 Module System Complete**
 - [x] Sidebar dev section (visible only when MAKESTACK_DEV_MODE=true)
 - [x] CLI (makestack start, dev, dev --module, module create, module validate, mcp, rebuild-frontend)
 - [x] Tests (74 new — module_manifest, module_sdk, module_loader — 197 total)
-- [ ] Widget pack loader (frontend-only, no restart) — Phase 6
-- [ ] Registry client (resolve packages from registries, clone to cache) — Phase 6
-- [ ] Package installer (type-specific handlers: module, widget-pack, catalogue, data) — Phase 6
-- [ ] docker-compose.yml — Phase 7
-- [ ] Export/import — Phase 7
+- [x] Registry client (resolve packages from registries, clone to cache) — Phase 6
+- [x] Package cache manager (clone, version-switch, update via Git) — Phase 6
+- [x] Type-specific install handlers (module, widget-pack, catalogue, data) — Phase 6
+- [x] Package management API endpoints (/api/packages/*, /api/registries/*) — Phase 6
+- [x] CLI — `makestack install/uninstall/update/search/list`, `makestack registry add/list/remove/refresh` — Phase 6
+- [x] MCP tools for packages/registries — Phase 6
+- [x] Widget pack loader (frontend-only, no restart) — Phase 7 (registry install handler)
+- [x] docker-compose.yml — Phase 7
+- [x] docker-compose.dev.yml — Phase 7
+- [x] Dockerfile (multi-stage: frontend + python runtime) — Phase 7
+- [x] Export/import (GET/POST /api/data/export|import, cli, MCP tools) — Phase 7
+- [x] Degraded mode: LRU cache in CatalogueClient, stale-while-revalidate — Phase 7
+- [x] Core health check: last_core_check timestamp, cache_size in /api/status — Phase 7
+- [x] Connection indicator in header (green/yellow/red dot) — Phase 7
+- [x] Stale data banner in Layout when Core is disconnected — Phase 7
+- [x] ModuleErrorBoundary (React class component, wraps module keyword renderers) — Phase 7
+- [x] Production logging: JSON + RotatingFileHandler (10MB, 5 files) — Phase 7
+- [x] Request logging middleware with slow-request warnings (>1s) — Phase 7
+- [x] POST /api/dev/error — frontend error reporting (dev mode only) — Phase 7
+- [x] Frontend window error handler → POST /api/dev/error in dev, console in prod — Phase 7
+- [x] Static files mount for frontend/dist (Docker/production) — Phase 7
+- [x] End-to-end integration tests (16 tests covering full flow + degraded mode + export/import) — Phase 7
 
 ---
 
 ## What's In Progress
 
-Nothing currently in progress. Ready to begin Phase 6 (Registry / Package Manager).
+Nothing — v0 feature-complete.
 
 ---
 
 ## What's Blocked / Known Issues
 
 Nothing currently blocked.
+
+---
+
+## Session Log (continued)
+
+### 2026-03-07 — Phase 7: Polish — Degraded Mode, Export/Import, Docker, Production Hardening
+
+Built complete production hardening. 16 new E2E tests; 314 total, all passing.
+
+**Files created:**
+- `backend/app/routers/data.py` — GET /api/data/export + POST /api/data/import (3 strategies: additive, overwrite, skip_conflicts)
+- `cli/commands/data.py` — `makestack export` / `makestack import` CLI commands
+- `mcp_server/tools/data.py` — `export_data` / `import_data` MCP tools
+- `frontend/src/hooks/use-status.ts` — polls /api/status every 30s for connection state
+- `frontend/src/components/modules/ModuleErrorBoundary.tsx` — React error boundary for module components
+- `backend/tests/test_e2e.py` — 16 E2E tests
+- `Dockerfile` — multi-stage build (Node.js frontend + Python runtime)
+- `docker-compose.yml` — Core + Shell orchestration
+- `docker-compose.dev.yml` — dev override with hot-reload + source mounts
+
+**Files modified:**
+- `backend/app/core_client.py` — full rewrite: LRU cache (_LRUCache + _CacheEntry), stale-while-revalidate, background refresh, stale serving when Core down
+- `backend/app/main.py` — RequestLoggingMiddleware (slow request warning), _configure_logging with RotatingFileHandler (prod) + stdlib LoggerFactory, last_core_check tracking, static files mount, data router
+- `backend/app/models.py` — SystemStatus: + last_core_check, + cache_size
+- `backend/app/routers/system.py` — GET /api/status includes last_core_check + cache_size; added export/import capabilities
+- `backend/app/routers/dev.py` — POST /api/dev/error (frontend error reporting, dev-only); GET /api/dev/catalogue-proxy (cache stats)
+- `backend/tests/conftest.py` — mock_core.cache_size = 0, last_core_check on test_app.state
+- `frontend/src/components/layout/Header.tsx` — CoreConnectionIndicator (green/yellow/red dot)
+- `frontend/src/components/layout/Layout.tsx` — StaleBanner (dismissable, shown when core_connected=false)
+- `frontend/src/components/keywords/KeywordValue.tsx` — wraps module renderers in ModuleErrorBoundary
+- `frontend/src/main.tsx` — window error + unhandledrejection handlers
+- `mcp_server/server.py` — registers data tools
+- `cli/main.py` — registers export/import commands
+
+**Key implementation notes:**
+- LRU cache: max 500 entries, 5-min TTL for list/search, 30-min TTL for individual items
+- Stale-while-revalidate: expired entries served immediately if Core is up, refreshed in background via asyncio.create_task
+- Core down + expired cache: entries served with warning log; routes return 503 on cache miss + Core down
+- Writes (POST/PUT/DELETE) always propagate 503 when Core is down — never cached
+- ModuleErrorBoundary: wraps all non-core keyword renderers; core keywords (TIMER_, MEASUREMENT_, etc.) rendered without boundary overhead
+- Production logs: JSON format, RotatingFileHandler (10MB, 5 rotations) at ~/.makestack/logs/shell.log + stdout (for Docker)
+- RequestLoggingMiddleware: logs all /api/* requests; WARNING when >1s; skips /health and /mcp/
+- docker-compose: depends_on Core with healthcheck condition; separate volumes for data and userdb
+- Export format v1.0.0: version, exported_at, shell_version, sections (workshops+members, inventory, preferences, module_data)
+- Import strategies: additive (default), overwrite (replaces existing), skip_conflicts (alias for additive)
+
+### 2026-03-07 — Phase 6: Registry / Package Manager
+
+Built the complete Git-native package management system. 101 new tests; 298 total, all passing.
+
+**Files created (backend):**
+- `backend/app/package_manifest.py` — PackageManifest Pydantic model (makestack-package.json)
+- `backend/app/registry_client.py` — RegistryClient: reads cloned registry repos, resolves package names, git clone/pull ops via asyncio.to_thread
+- `backend/app/package_cache.py` — PackageCache: clones repos to ~/.makestack/packages/{type}/{name}/, semver tag resolution, version switching
+- `backend/app/migrations/003_add_registry_tables.py` — adds installed_registries and installed_packages tables
+- `backend/app/installers/__init__.py` — PackageInstaller dispatcher
+- `backend/app/installers/base.py` — InstallResult dataclass
+- `backend/app/installers/module_installer.py` — registers in installed_modules + pip installs deps, restart required
+- `backend/app/installers/widget_installer.py` — registers in installed_packages, no restart
+- `backend/app/installers/catalogue_installer.py` — scans for primitives, POSTs to Core API, handles conflicts
+- `backend/app/installers/data_installer.py` — copies files per targets map, no restart
+- `backend/app/routers/packages.py` — 10 endpoints: /api/packages (CRUD), /api/packages/search, /api/registries (CRUD + refresh)
+- `backend/tests/test_package_manifest.py` — 20 tests
+- `backend/tests/test_registry_client.py` — 20 tests (real filesystem fixtures)
+- `backend/tests/test_package_cache.py` — 18 tests (real git repos in tmp_path)
+- `backend/tests/test_installers.py` — 24 tests
+- `backend/tests/test_packages_routes.py` — 25 tests (mocked services)
+
+**Files modified:**
+- `backend/app/models.py` — added PackageInstallRequest, InstalledPackage, RegistryRecord, RegistryAddRequest, InstallResult
+- `backend/app/main.py` — imports packages router, initialises RegistryClient + PackageCache on app.state in lifespan
+- `backend/app/dependencies.py` — added get_registry_client, get_package_cache providers
+- `backend/app/routers/system.py` — added packages/registries capabilities to GET /api/capabilities
+- `mcp_server/tools/modules.py` — added list_packages, install_package, uninstall_package, search_packages, list_registries tools
+- `cli/main.py` — added install, uninstall, update, search, list commands + registry subgroup (add/list/remove/refresh)
+
+**Key implementation notes:**
+- RegistryClient is filesystem-only (reads cloned index.json files) — DB interaction is in the router
+- PackageCache organises repos by type: modules/, widgets/, catalogues/, data/
+- Semver resolution: _parse_semver + _latest_tag pick highest v* tag
+- Git ops use asyncio.to_thread(subprocess.run) to not block the event loop
+- Module install: register in installed_modules with package_path; migrations run at next startup
+- Catalogue install: scans tools/materials/techniques/workflows/projects/events/ for */manifest.json
+- Data install: reads 'targets' from makestack-package.json, copies files to Path.home() / dest
+- Registry client + package cache stored on app.state; packages router accesses via request.app.state
+- CLI package commands call Shell REST API (Shell must be running); registry commands wrap /api/registries/*
+- Install from local path: reads makestack-package.json directly, no clone needed
+- Install from Git URL: clones to tmpdir to determine type, then fetches properly into cache
 
 ---
 

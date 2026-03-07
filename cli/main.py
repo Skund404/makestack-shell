@@ -10,6 +10,19 @@ Usage:
     makestack module create NAME Scaffold a new module
     makestack module validate PATH  Validate a module manifest
     makestack rebuild-frontend   Regenerate module registry and rebuild the frontend
+
+Package management (requires Shell to be running):
+    makestack install <name>     Install a package from a registry
+    makestack install <url>      Install from a Git URL
+    makestack install <path>     Install from a local path
+    makestack uninstall <name>   Uninstall a package
+    makestack update <name>      Update to latest version
+    makestack search <query>     Search across all registries
+    makestack list               List installed packages
+    makestack registry add <name> <url>  Add a registry
+    makestack registry list      List configured registries
+    makestack registry remove <name>    Remove a registry
+    makestack registry refresh   Pull latest from all registries
 """
 
 import click
@@ -519,6 +532,247 @@ async def test_list_items_empty(client):
     assert data["items"] == []
     assert data["total"] == 0
 '''
+
+
+# ---------------------------------------------------------------------------
+# Package management commands (call Shell REST API — Shell must be running)
+# ---------------------------------------------------------------------------
+
+def _shell_url() -> str:
+    import os
+    return os.getenv("MAKESTACK_SHELL_URL", "http://localhost:3000")
+
+
+def _api(method: str, path: str, **kwargs) -> dict:
+    """Make an HTTP request to the Shell API. Exits on connection error."""
+    import httpx
+    url = _shell_url() + path
+    try:
+        resp = httpx.request(method, url, timeout=60.0, **kwargs)
+        return resp.json()
+    except httpx.ConnectError:
+        click.echo(
+            f"Error: Cannot connect to Shell at {_shell_url()}. "
+            "Is the Shell running? Use 'makestack start' or 'makestack dev'.",
+            err=True,
+        )
+        raise SystemExit(1)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)
+
+
+@app.command("install")
+@click.argument("target")
+@click.option("--version", "-v", default=None, help="Pin to a specific version (e.g. 1.2.0)")
+def install(target: str, version: str | None) -> None:
+    """Install a package from a registry name, Git URL, or local path.
+
+    TARGET can be:
+      inventory-stock          — package name (resolved via registries)
+      https://github.com/...  — direct Git URL
+      ./local/path            — local directory path
+    """
+    payload: dict = {}
+    if target.startswith("http://") or target.startswith("https://"):
+        payload["source"] = target
+    elif target.startswith("./") or target.startswith("/") or target.startswith(".."):
+        payload["source"] = target
+    else:
+        payload["name"] = target
+    if version:
+        payload["version"] = version
+
+    click.echo(f"Installing '{target}'…")
+    result = _api("POST", "/api/packages/install", json=payload)
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        if "warnings" in result:
+            for w in result["warnings"]:
+                click.echo(f"  ! {w}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"OK  {result.get('package_name')} v{result.get('version')} ({result.get('package_type')})")
+    click.echo(f"    {result.get('message', '')}")
+
+    if result.get("warnings"):
+        click.echo("Warnings:")
+        for w in result["warnings"]:
+            click.echo(f"  ! {w}")
+
+    if result.get("restart_required"):
+        click.echo("\nRestart the Shell to activate the module:")
+        click.echo("  makestack start")
+
+
+@app.command("uninstall")
+@click.argument("name")
+def uninstall(name: str) -> None:
+    """Uninstall an installed package.
+
+    For modules, data tables are preserved.
+    """
+    click.echo(f"Uninstalling '{name}'…")
+    result = _api("DELETE", f"/api/packages/{name}")
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"OK  {result.get('message', 'Uninstalled.')}")
+    if result.get("restart_required"):
+        click.echo("\nRestart the Shell to complete uninstallation:")
+        click.echo("  makestack start")
+
+
+@app.command("update")
+@click.argument("name")
+@click.option("--version", "-v", default=None, help="Pin to a specific version")
+def update(name: str, version: str | None) -> None:
+    """Update an installed package to its latest version."""
+    params = {}
+    if version:
+        params["version"] = version
+
+    click.echo(f"Updating '{name}'…")
+    result = _api("POST", f"/api/packages/{name}/update", params=params)
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"OK  {result.get('package_name')} → v{result.get('version')}")
+    click.echo(f"    {result.get('message', '')}")
+
+    if result.get("restart_required"):
+        click.echo("\nRestart the Shell to activate the updated module:")
+        click.echo("  makestack start")
+
+
+@app.command("search")
+@click.argument("query")
+def search(query: str) -> None:
+    """Search for packages across all configured registries."""
+    result = _api("GET", "/api/packages/search", params={"q": query})
+    items = result.get("items", [])
+
+    if not items:
+        click.echo(f"No packages found matching '{query}'.")
+        return
+
+    click.echo(f"Found {len(items)} package(s) matching '{query}':\n")
+    for pkg in items:
+        click.echo(f"  {pkg['name']}  [{pkg['type']}]")
+        if pkg.get("description"):
+            click.echo(f"    {pkg['description']}")
+        click.echo(f"    Registry: {pkg.get('registry', 'unknown')}")
+        click.echo()
+
+
+@app.command("list")
+def list_packages() -> None:
+    """List all installed packages with their types and versions."""
+    result = _api("GET", "/api/packages")
+    items = result.get("items", [])
+
+    if not items:
+        click.echo("No packages installed.")
+        return
+
+    click.echo(f"Installed packages ({result.get('total', len(items))}):\n")
+    for pkg in items:
+        status = ""
+        click.echo(f"  {pkg['name']}  v{pkg['version']}  [{pkg['type']}]{status}")
+
+
+# ---------------------------------------------------------------------------
+# makestack registry (subcommand group)
+# ---------------------------------------------------------------------------
+
+@app.group("registry")
+def registry_group() -> None:
+    """Registry management commands."""
+
+
+@registry_group.command("add")
+@click.argument("name")
+@click.argument("git_url")
+def registry_add(name: str, git_url: str) -> None:
+    """Clone and register a package registry.
+
+    NAME: a short label for the registry (e.g. 'official', 'community')
+    GIT_URL: the Git URL of the registry repo
+    """
+    click.echo(f"Adding registry '{name}' from {git_url}…")
+    result = _api("POST", "/api/registries", json={"name": name, "git_url": git_url})
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"OK  Registry '{name}' added ({result.get('package_count', 0)} packages).")
+
+
+@registry_group.command("list")
+def registry_list() -> None:
+    """List all configured package registries."""
+    result = _api("GET", "/api/registries")
+    items = result.get("items", [])
+
+    if not items:
+        click.echo("No registries configured.")
+        click.echo("Add one with: makestack registry add <name> <git_url>")
+        return
+
+    click.echo(f"Configured registries ({len(items)}):\n")
+    for reg in items:
+        refreshed = reg.get("last_refreshed") or "never"
+        click.echo(f"  {reg['name']}  ({reg.get('package_count', 0)} packages)  last refreshed: {refreshed}")
+        click.echo(f"    {reg['git_url']}")
+        click.echo()
+
+
+@registry_group.command("remove")
+@click.argument("name")
+def registry_remove(name: str) -> None:
+    """Remove a configured registry."""
+    click.echo(f"Removing registry '{name}'…")
+    result = _api("DELETE", f"/api/registries/{name}")
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"OK  Registry '{name}' removed.")
+
+
+@registry_group.command("refresh")
+def registry_refresh() -> None:
+    """Pull the latest package index from all configured registries."""
+    click.echo("Refreshing registries…")
+    result = _api("POST", "/api/registries/refresh")
+
+    refreshed = result.get("refreshed", [])
+    errors = result.get("errors", {})
+
+    for name in refreshed:
+        click.echo(f"  OK  {name}")
+    for name, err in errors.items():
+        click.echo(f"  !!  {name}: {err}")
+
+    if not refreshed and not errors:
+        click.echo("No registries to refresh. Add one with: makestack registry add")
+
+
+# ---------------------------------------------------------------------------
+# Data export/import commands
+# ---------------------------------------------------------------------------
+
+from cli.commands.data import export_cmd, import_cmd  # noqa: E402
+
+app.add_command(export_cmd, name="export")
+app.add_command(import_cmd, name="import")
 
 
 if __name__ == "__main__":

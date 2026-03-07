@@ -11,6 +11,8 @@ Startup sequence:
 """
 
 import asyncio
+import logging
+import logging.handlers
 import os
 import time
 from contextlib import asynccontextmanager
@@ -21,9 +23,12 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .core_client import CatalogueClient, CoreUnavailableError
 from .module_loader import load_modules
+from .package_cache import PackageCache
+from .registry_client import RegistryClient
 from .userdb import UserDB
 
 # ---------------------------------------------------------------------------
@@ -51,7 +56,11 @@ def _load_config() -> dict:
 
 def _configure_logging(dev_mode: bool) -> None:
     """Configure structlog for structured JSON output (production) or
-    human-friendly console output (dev)."""
+    human-friendly console output (dev).
+
+    In production, logs are also written to ~/.makestack/logs/shell.log
+    with 10MB rotation (5 files kept). All output also goes to stdout for Docker.
+    """
     processors: list = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -59,17 +68,76 @@ def _configure_logging(dev_mode: bool) -> None:
     ]
     if dev_mode:
         processors.append(structlog.dev.ConsoleRenderer())
+        structlog.configure(
+            processors=processors,
+            wrapper_class=structlog.make_filtering_bound_logger(10),  # DEBUG
+            context_class=dict,
+            logger_factory=structlog.PrintLoggerFactory(),
+        )
     else:
         processors.append(structlog.processors.JSONRenderer())
+        # In production, write JSON logs to file (rotated) AND stdout.
+        log_dir = Path.home() / ".makestack" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "shell.log"
 
-    structlog.configure(
-        processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(
-            20 if not dev_mode else 10  # INFO in prod, DEBUG in dev
-        ),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-    )
+        # Set up stdlib logging so structlog can use a rotating file handler.
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,  # 10 MB per file
+            backupCount=5,
+            encoding="utf-8",
+        )
+        stream_handler = logging.StreamHandler()
+
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(stream_handler)
+        root_logger.setLevel(logging.INFO)
+
+        structlog.configure(
+            processors=processors,
+            wrapper_class=structlog.make_filtering_bound_logger(20),  # INFO
+            context_class=dict,
+            logger_factory=structlog.stdlib.LoggerFactory(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Request logging middleware
+# ---------------------------------------------------------------------------
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every HTTP request with method, path, status code, and duration.
+
+    Emits WARNING for requests that take longer than 1 second.
+    Skips health and static-file requests to keep logs clean.
+    """
+
+    _SKIP_PREFIXES = ("/health", "/mcp/")
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip paths that would produce noisy logs
+        path = request.url.path
+        for prefix in self._SKIP_PREFIXES:
+            if path.startswith(prefix):
+                return await call_next(request)
+
+        log = structlog.get_logger().bind(component="http")
+        start = time.monotonic()
+        response = await call_next(request)
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        log_fn = log.warning if elapsed_ms > 1000 else log.info
+        log_fn(
+            "http_request",
+            method=request.method,
+            path=path,
+            status=response.status_code,
+            elapsed_ms=round(elapsed_ms, 1),
+        )
+        return response
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +147,8 @@ def _configure_logging(dev_mode: bool) -> None:
 
 async def _core_health_poll(app: FastAPI, interval_seconds: int = 30) -> None:
     """Periodically probe Core and update app.state.core_connected."""
+    from datetime import datetime, timezone
+
     log = structlog.get_logger().bind(component="health_poll")
     while True:
         await asyncio.sleep(interval_seconds)
@@ -86,6 +156,7 @@ async def _core_health_poll(app: FastAPI, interval_seconds: int = 30) -> None:
         was_connected = app.state.core_connected
         now_connected = await client.health_check()
         app.state.core_connected = now_connected
+        app.state.last_core_check = datetime.now(timezone.utc).isoformat()
 
         if was_connected and not now_connected:
             log.warning("core_disconnected")
@@ -110,6 +181,13 @@ async def lifespan(app: FastAPI):
     app.state.dev_mode = config["dev_mode"]
     app.state.start_time = time.monotonic()
 
+    # --- Package manager --------------------------------------------------
+    makestack_home = Path(os.getenv("MAKESTACK_HOME", "~/.makestack")).expanduser()
+    registry_client = RegistryClient(registries_dir=makestack_home / "registries")
+    package_cache = PackageCache(packages_dir=makestack_home / "packages")
+    app.state.registry_client = registry_client
+    app.state.package_cache = package_cache
+
     # --- UserDB -----------------------------------------------------------
     db = UserDB(path=config["userdb_path"], dev_mode=config["dev_mode"])
     await db.open()
@@ -122,9 +200,12 @@ async def lifespan(app: FastAPI):
         api_key=config["core_api_key"],
         dev_mode=config["dev_mode"],
     )
+    from datetime import datetime, timezone
+
     core_connected = await core_client.health_check()
     app.state.core_client = core_client
     app.state.core_connected = core_connected
+    app.state.last_core_check = datetime.now(timezone.utc).isoformat()
 
     if core_connected:
         log.info("core_connected", url=config["core_url"])
@@ -213,7 +294,7 @@ def create_app() -> FastAPI:
     their own overrides before importing.
     """
     # Import routers here to avoid circular imports at module load time.
-    from .routers import catalogue, dev, inventory, modules, settings, system, version, workshops
+    from .routers import catalogue, data, dev, inventory, modules, packages, settings, system, version, workshops
 
     app = FastAPI(
         title="Makestack Shell",
@@ -224,6 +305,9 @@ def create_app() -> FastAPI:
         ),
         lifespan=lifespan,
     )
+
+    # Request logging middleware — must be added before CORS so it sees all requests.
+    app.add_middleware(RequestLoggingMiddleware)
 
     # CORS: allow the React dev server (localhost:5173) during development.
     app.add_middleware(
@@ -259,6 +343,8 @@ def create_app() -> FastAPI:
     app.include_router(version.router)
     app.include_router(settings.router)
     app.include_router(modules.router)
+    app.include_router(packages.router)
+    app.include_router(data.router)
     app.include_router(system.router)
     app.include_router(dev.router)  # Only active in dev mode; the router self-guards.
 
@@ -266,6 +352,15 @@ def create_app() -> FastAPI:
     # The SSE endpoint is available at /mcp/sse.
     from mcp_server.transport import create_sse_app
     app.mount("/mcp", create_sse_app())
+
+    # Mount frontend static files LAST so /api/* routes take priority.
+    # Only active when the built frontend exists (Docker / production).
+    import os
+    from fastapi.staticfiles import StaticFiles
+
+    frontend_dist = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    if os.path.isdir(frontend_dist):
+        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
     return app
 
