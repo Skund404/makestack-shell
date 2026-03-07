@@ -1183,7 +1183,7 @@ See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
 
 ## Current State
 
-Shell: **Phase 3 Frontend Foundation Complete**
+Shell: **Phase 5 Module System Complete**
 
 - [x] Python project initialized (pyproject.toml, requirements.txt)
 - [x] FastAPI entry point with startup sequence
@@ -1209,24 +1209,36 @@ Shell: **Phase 3 Frontend Foundation Complete**
 - [x] Keyword renderer registry (resolution chain: module → pack → core → raw text)
 - [x] Core widget implementations (TIMER_, MEASUREMENT_, MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_, IMAGE_, LINK_, NOTE_, CHECKLIST_)
 - [x] Version timeline and diff viewer (VersionTimeline, DiffViewer, VersionBadge, VersionCompare)
-- [ ] Inventory views
-- [ ] Workshop management views
-- [ ] Settings views
-- [ ] Widget pack loader (frontend-only, no restart)
-- [ ] Module SDK package
-- [ ] Module loader (discovery, validation, mounting)
-- [ ] Frontend module integration (build-time component registry)
-- [ ] Registry client (resolve packages from registries, clone to cache)
-- [ ] Package installer (type-specific handlers: module, widget-pack, catalogue, data)
-- [ ] CLI (start, dev, mcp, install/uninstall, registry management, export/import)
-- [ ] docker-compose.yml
-- [ ] Tests
+- [x] Inventory views (list with type/workshop filters, detail with diff viewer + version update, add-to-inventory dialog)
+- [x] Workshop management views (list with active highlight, detail with member management + inline edit)
+- [x] Settings views (theme switcher with live preview, system info)
+- [x] Sidebar navigation fully functional (stale count badge, active workshop label)
+- [x] Header workshop switcher (dropdown to set active workshop context)
+- [x] "Add to inventory" button on catalogue detail view
+- [x] Module manifest schema (ModuleManifest Pydantic model with full validation)
+- [x] UserDB migration 002 (package_path column for local module loading)
+- [x] Module SDK package (catalogue_client, userdb, config, context, peers, logger, testing)
+- [x] `makestack_sdk` importable package (thin re-export wrapper at repo root)
+- [x] Module loader (discovery, manifest validation, migration runner, router mounting)
+- [x] ModuleRegistry (runtime registry — loaded/failed, keywords, panels, endpoints)
+- [x] Modules router updated (manifest and load state in list response)
+- [x] Dev API updated (GET /api/dev/modules, GET /api/dev/keywords)
+- [x] MCP tool generator implemented (generate_module_tools() from ModuleRegistry)
+- [x] Frontend dev tools (keywords playground, schema inspector, module inspector)
+- [x] Sidebar dev section (visible only when MAKESTACK_DEV_MODE=true)
+- [x] CLI (makestack start, dev, dev --module, module create, module validate, mcp, rebuild-frontend)
+- [x] Tests (74 new — module_manifest, module_sdk, module_loader — 197 total)
+- [ ] Widget pack loader (frontend-only, no restart) — Phase 6
+- [ ] Registry client (resolve packages from registries, clone to cache) — Phase 6
+- [ ] Package installer (type-specific handlers: module, widget-pack, catalogue, data) — Phase 6
+- [ ] docker-compose.yml — Phase 7
+- [ ] Export/import — Phase 7
 
 ---
 
 ## What's In Progress
 
-Nothing currently in progress. Ready to begin Phase 4 (Personal State — Inventory, Workshop, Settings views).
+Nothing currently in progress. Ready to begin Phase 6 (Registry / Package Manager).
 
 ---
 
@@ -1456,6 +1468,87 @@ Built the complete React frontend. Build passes cleanly (`tsc -b && vite build`)
 - TanStack Router v1 code-based routing — `validateSearch` return type is strict; `at: undefined` must be passed explicitly when navigating to `/catalogue/detail`
 - `erasableSyntaxOnly: true` in tsconfig requires class properties declared explicitly, not via constructor parameter shorthand
 - Route components defined inline in `router.tsx` (not in separate files) to access `useSearch()` with the correct typed route reference
+
+### 2026-03-07 — Phase 4: Personal State (Inventory, Workshop, Settings Views)
+
+**Files created:**
+- `frontend/src/lib/types.ts` — added InventoryItem, InventoryItemWithCatalogue, Workshop, WorkshopWithMembers, WorkshopMember, WorkshopCreate, WorkshopUpdate
+- `frontend/src/hooks/use-inventory.ts` — 6 hooks: useInventoryList, useInventoryItem, useStaleItems, useAddToInventory, useUpdateInventoryItem, useRemoveFromInventory
+- `frontend/src/hooks/use-workshops.ts` — 9 hooks: useWorkshopList, useWorkshop, useActiveWorkshop, useCreateWorkshop, useUpdateWorkshop, useDeleteWorkshop, useAddToWorkshop, useRemoveFromWorkshop, useSetActiveWorkshop
+- `frontend/src/components/inventory/AddToInventoryDialog.tsx` — shared dialog (pre-fill from catalogue detail OR search to select primitive)
+- `frontend/src/routes/inventory/index.tsx` — list with type/workshop filters, stale badges, pagination
+- `frontend/src/routes/inventory/detail.tsx` — full detail with staleness diff, version update, workshop assignment
+- `frontend/src/routes/workshops/index.tsx` — grid with active highlight, create dialog
+- `frontend/src/routes/workshops/detail.tsx` — detail with inline edit, member list by type, add primitive search dialog
+- `frontend/src/routes/settings/index.tsx` — theme switcher with live CSS var apply, system info panel
+
+**Files modified:**
+- `frontend/src/router.tsx` — added 5 new routes: inventory, inventory/detail, workshops, workshops/detail, settings
+- `frontend/src/components/layout/Sidebar.tsx` — enabled all nav links, stale count badge on Inventory, active workshop label in PERSONAL section
+- `frontend/src/components/layout/Header.tsx` — replaced "All" placeholder with functional WorkshopSwitcher dropdown
+- `frontend/src/routes/catalogue/detail.tsx` — added "Add to inventory" button that opens AddToInventoryDialog
+
+**Key patterns:**
+- useActiveWorkshop uses a single async queryFn that chains settings → workshop fetch
+- useSetActiveWorkshop invalidates `[WS_ACTIVE_KEY]` which triggers refetch of the chained query
+- Routes without search params use `validateSearch: () => ({} as Record<never, never>)`
+- Workshop member grouping: plain for loop with bracket notation (avoids ??= for compatibility)
+- Theme switching: mutationFn does PUT then fetches /theme/data and calls applyTheme() synchronously
+
+### 2026-03-07 — Phase 5: Module System
+
+Built the complete module system. 74 new tests; 197 total, all passing. Frontend build clean.
+
+**Files created (backend):**
+- `backend/app/module_manifest.py` — ModuleManifest Pydantic model with field validation (name regex, keyword regex, table prefix check)
+- `backend/app/module_loader.py` — ModuleLoader: discovery from installed_modules table, manifest parsing, migration runner, router mounting; ModuleRegistry class for runtime queries
+- `backend/app/migrations/002_add_package_path.py` — adds `package_path` column to installed_modules for local dev loading
+- `backend/sdk/catalogue_client.py` — SDK surface: re-exports CatalogueClient + FastAPI `get_catalogue_client` dependency
+- `backend/sdk/userdb.py` — SDK surface: ModuleUserDB with table-name scope enforcement; `get_module_userdb_factory()`
+- `backend/sdk/config.py` — SDK surface: ModuleConfig with defaults/overrides; `get_module_config_factory()`
+- `backend/sdk/context.py` — SDK surface: ShellContext (user, workshop, version, dev_mode); `get_shell_context()`
+- `backend/sdk/peers.py` — SDK surface: PeerModules with `is_installed()` and `call()` via Shell routing; `get_peer_modules()`
+- `backend/sdk/logger.py` — SDK surface: `get_logger(module_name)` → pre-tagged structlog BoundLogger
+- `backend/sdk/testing.py` — SDK surface: MockCatalogueClient, MockUserDB, MockShellContext, MockPeerModules, `create_test_app()`
+- `makestack_sdk/__init__.py` — importable `makestack_sdk` package (thin re-exports from backend.sdk)
+- `makestack_sdk/testing.py`, `userdb.py`, `config.py`, `context.py`, `logger.py`, `peers.py`, `catalogue_client.py` — sub-module re-exports
+- `backend/tests/test_module_manifest.py` — 30 tests for manifest validation
+- `backend/tests/test_module_sdk.py` — 26 tests for SDK classes (scoping, config, mocks, peers)
+- `backend/tests/test_module_loader.py` — 18 tests for full module lifecycle
+
+**Files created (cli):**
+- `cli/main.py` — Click CLI with: `start`, `dev` (+ `--module PATH`), `module create`, `module validate`, `mcp`, `rebuild-frontend`
+- Uses `<<KEY>>` placeholder templates (not .format()) to avoid JSON/TS curly brace conflicts in scaffolding
+
+**Files created (frontend):**
+- `frontend/src/routes/dev/keywords.tsx` — Keyword Playground: paste JSON, preview renderers, show registry
+- `frontend/src/routes/dev/schema.tsx` — Schema Inspector: table browser grouped by owner, read-only SQL runner
+- `frontend/src/routes/dev/modules.tsx` — Module Inspector: collapsible cards per module with keywords/endpoints/tables
+
+**Files modified:**
+- `backend/sdk/__init__.py` — full public API exports
+- `backend/app/main.py` — runs module loader in lifespan, wires MCP module tools
+- `backend/app/routers/modules.py` — enriches list response with loaded/failed state from ModuleRegistry
+- `backend/app/routers/dev.py` — added `GET /api/dev/modules` and `GET /api/dev/keywords`
+- `backend/app/routers/system.py` — uses ModuleRegistry for real module counts
+- `backend/app/models.py` — added `loaded`, `load_error`, `manifest`, `package_path` fields to InstalledModule
+- `mcp_server/transport.py` — exposed `get_mcp_server()` singleton for post-startup tool registration
+- `mcp_server/tool_generator.py` — implemented `generate_module_tools(mcp, registry)`
+- `frontend/src/router.tsx` — added `/dev/keywords`, `/dev/schema`, `/dev/modules` routes
+- `frontend/src/components/layout/Sidebar.tsx` — DevSection queries `/api/status` dev_mode flag, shows dev nav only in dev mode
+- `pyproject.toml` — added `click>=8.1.0` dependency, `[project.scripts]` entry point, expanded packages list
+- `backend/requirements.txt` — added `click>=8.1.0`
+
+**Key implementation notes:**
+- Module loader stores LoadedModule/FailedModule objects in ModuleRegistry on app.state.module_registry
+- Local module loading: `package_path` in installed_modules; `_import_routes()` uses `importlib.util.spec_from_file_location`
+- Module migrations tracked in `module_migrations` table; idempotent (skips already-applied)
+- `makestack dev --module ./path` calls `_register_dev_module()` synchronously before uvicorn starts
+- MCP tool generator: one tool per `api_endpoints` entry in manifest; tool names use `{module_name}__{method}_{path_slug}` convention; delegates to Shell's `/modules/{name}/` routing
+- `makestack_sdk` is importable as a package because a root-level `makestack_sdk/` directory re-exports from `backend/sdk/`
+- `ModuleUserDB._check_tables()` uses regex to extract table names from SQL — catches FROM/JOIN/INTO/UPDATE
+- DevSection in Sidebar queries `/api/status` for `dev_mode` flag — degrades gracefully if not in dev mode
+- CLI scaffold templates use `<<KEY>>` placeholders (not f-strings) to avoid conflicts with JSON/TypeScript `{}`/`{}` syntax
 
 ### 2026-03-06 — Phase 1: Backend Foundation
 Built the complete backend foundation. 98 tests, all passing.

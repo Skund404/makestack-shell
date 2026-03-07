@@ -281,6 +281,11 @@ class InstalledModule(BaseModel):
     installed_at: str
     enabled: bool
     last_migration: str | None = None
+    package_path: str | None = None
+    # Runtime fields — populated when the module is loaded:
+    loaded: bool = False
+    load_error: str | None = None
+    manifest: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------

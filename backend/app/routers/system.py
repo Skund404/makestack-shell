@@ -28,15 +28,17 @@ async def get_status(
     db: UserDB = Depends(get_userdb),
 ) -> SystemStatus:
     """Return current Shell health and runtime state."""
-    modules_loaded = await db.count("installed_modules", "enabled = 1")
     start_time: float = getattr(request.app.state, "start_time", time.monotonic())
+    registry = getattr(request.app.state, "module_registry", None)
+    modules_loaded = len(registry.get_loaded()) if registry else 0
+    modules_failed = len(registry.get_failed()) if registry else 0
 
     return SystemStatus(
         shell_version=_SHELL_VERSION,
         core_connected=core.connected,
         core_url=getattr(request.app.state, "config", {}).get("core_url", "http://localhost:8420"),
         modules_loaded=modules_loaded,
-        modules_failed=0,  # Updated when module loader is implemented in Phase 5
+        modules_failed=modules_failed,
         userdb_path=db.path,
         uptime_seconds=round(time.monotonic() - start_time, 1),
     )

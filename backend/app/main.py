@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .core_client import CatalogueClient, CoreUnavailableError
+from .module_loader import load_modules
 from .userdb import UserDB
 
 # ---------------------------------------------------------------------------
@@ -134,6 +135,32 @@ async def lifespan(app: FastAPI):
             note="Running in degraded mode — catalogue features disabled",
         )
 
+    # --- Module loader ----------------------------------------------------
+    # load_modules mounts module routers onto app. Must happen before the
+    # server starts accepting requests. Failures are collected, not raised.
+    module_registry = await load_modules(app, db)
+    app.state.module_registry = module_registry
+
+    loaded = len(module_registry.get_loaded())
+    failed = len(module_registry.get_failed())
+    if loaded:
+        log.info("modules_loaded", count=loaded, failed=failed)
+    if failed:
+        for fm in module_registry.get_failed():
+            log.error("module_failed", name=fm.name, error=fm.error)
+
+    # Wire module tools into the MCP server now that the registry is built.
+    try:
+        from mcp_server.transport import get_mcp_server
+        from mcp_server.tool_generator import generate_module_tools
+
+        mcp = get_mcp_server()
+        registered = await generate_module_tools(mcp, module_registry)
+        if registered:
+            log.info("mcp_module_tools_registered", count=registered)
+    except Exception as exc:
+        log.warning("mcp_module_tools_failed", error=str(exc))
+
     # --- Background tasks -------------------------------------------------
     health_task = asyncio.create_task(_core_health_poll(app))
 
@@ -147,13 +174,17 @@ async def lifespan(app: FastAPI):
         userdb=str(userdb_display),
         dev_mode=config["dev_mode"],
         port=config["port"],
+        modules_loaded=loaded,
+        modules_failed=failed,
     )
     print(
         f"\nMakestack Shell v{SHELL_VERSION}\n"
         f"Core: {'connected' if core_connected else 'unavailable (degraded mode)'}"
         f" ({config['core_url']})\n"
         f"UserDB: {userdb_display}\n"
-        f"Dev mode: {'enabled' if config['dev_mode'] else 'disabled'}\n"
+        f"Modules: {loaded} loaded"
+        + (f", {failed} failed" if failed else "")
+        + f"\nDev mode: {'enabled' if config['dev_mode'] else 'disabled'}\n"
         f"Listening on http://localhost:{config['port']}\n"
     )
 

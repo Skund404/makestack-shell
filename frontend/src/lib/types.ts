@@ -87,6 +87,59 @@ export interface PrimitiveUpdate {
   relationships?: Array<{ type: string; target: string }>
 }
 
+export interface InventoryItem {
+  id: string
+  catalogue_path: string
+  catalogue_hash: string
+  primitive_type: string
+  workshop_id: string | null
+  added_at: string
+  updated_at: string
+}
+
+export interface InventoryItemWithCatalogue extends InventoryItem {
+  catalogue_data: Primitive | null
+  is_stale: boolean
+  current_hash: string | null
+}
+
+export interface Workshop {
+  id: string
+  name: string
+  slug: string
+  description: string
+  icon: string
+  color: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkshopMember {
+  primitive_path: string
+  primitive_type: string
+  added_at: string
+}
+
+export interface WorkshopWithMembers extends Workshop {
+  members: WorkshopMember[]
+}
+
+export interface WorkshopCreate {
+  name: string
+  description?: string
+  icon?: string
+  color?: string
+}
+
+export interface WorkshopUpdate {
+  name?: string
+  description?: string
+  icon?: string
+  color?: string
+  sort_order?: number
+}
+
 export interface SystemStatus {
   shell_version: string
   core_connected: boolean

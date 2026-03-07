@@ -1,6 +1,15 @@
-import { Search } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { useState } from 'react'
+import { useWorkshopList, useActiveWorkshop, useSetActiveWorkshop } from '@/hooks/use-workshops'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/DropdownMenu'
 
 function Breadcrumb() {
   const loc = useRouterState({ select: (s) => s.location })
@@ -19,6 +28,44 @@ function Breadcrumb() {
         </span>
       ))}
     </nav>
+  )
+}
+
+function WorkshopSwitcher() {
+  const { data: workshops } = useWorkshopList()
+  const { data: activeWorkshop } = useActiveWorkshop()
+  const setActiveMutation = useSetActiveWorkshop()
+
+  const activeLabel = activeWorkshop?.name ?? 'All'
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="flex items-center gap-1.5 text-xs text-text-faint px-2 py-1 rounded bg-surface border border-border hover:border-border-bright hover:text-text transition-colors">
+          {activeLabel}
+          <ChevronDown size={11} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Workshop context</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => setActiveMutation.mutate(null)}
+        >
+          <span className={!activeWorkshop ? 'text-accent' : undefined}>All</span>
+        </DropdownMenuItem>
+        {(workshops?.items ?? []).map((ws) => (
+          <DropdownMenuItem
+            key={ws.id}
+            onSelect={() => setActiveMutation.mutate(ws.id)}
+          >
+            <span className={activeWorkshop?.id === ws.id ? 'text-accent' : undefined}>
+              {ws.name}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -47,9 +94,7 @@ export function Header() {
           className="h-7 pl-7 pr-3 rounded border bg-surface border-border-bright text-xs text-text placeholder:text-text-faint focus:outline-none focus:border-accent/40 w-52 transition-colors"
         />
       </form>
-      <div className="flex items-center gap-2 text-xs text-text-faint px-2 py-1 rounded bg-surface border border-border">
-        All
-      </div>
+      <WorkshopSwitcher />
     </header>
   )
 }

@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
   Edit2, Trash2, ChevronDown, ChevronRight,
-  GitBranch, Loader2, AlertCircle,
+  GitBranch, Loader2, AlertCircle, Archive,
 } from 'lucide-react'
 import { usePrimitive, useRelationships, useDeletePrimitive } from '@/hooks/use-catalogue'
+import { AddToInventoryDialog } from '@/components/inventory/AddToInventoryDialog'
 import { PropertyRenderer } from '@/components/catalogue/PropertyRenderer'
 import { StepRenderer } from '@/components/catalogue/StepRenderer'
 import { RelationshipsPanel } from '@/components/catalogue/RelationshipsPanel'
@@ -52,6 +53,7 @@ function PrimitiveDetailView({ path, at }: DetailViewProps) {
   const { data: relData } = useRelationships(path)
   const deleteMutation = useDeletePrimitive()
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [addToInvOpen, setAddToInvOpen] = useState(false)
   const [historyHash, setHistoryHash] = useState<string | undefined>()
 
   if (isLoading) {
@@ -105,6 +107,9 @@ function PrimitiveDetailView({ path, at }: DetailViewProps) {
         </div>
         {!at && (
           <div className="flex items-center gap-2 shrink-0">
+            <Button variant="secondary" size="sm" onClick={() => setAddToInvOpen(true)}>
+              <Archive size={12} /> Add to inventory
+            </Button>
             <Link to="/catalogue/edit" search={{ path }}>
               <Button variant="secondary" size="sm">
                 <Edit2 size={12} /> Edit
@@ -193,6 +198,15 @@ function PrimitiveDetailView({ path, at }: DetailViewProps) {
           </Button>
         </div>
       </Dialog>
+
+      {/* Add to inventory dialog */}
+      <AddToInventoryDialog
+        open={addToInvOpen}
+        onOpenChange={setAddToInvOpen}
+        preselectedPath={p.path}
+        preselectedName={p.name}
+        preselectedType={p.type}
+      />
     </div>
   )
 }

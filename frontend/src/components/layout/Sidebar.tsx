@@ -2,6 +2,7 @@ import {
   Box,
   BookOpen,
   Cog,
+  Database,
   FlaskConical,
   Folder,
   GitFork,
@@ -10,11 +11,16 @@ import {
   Package,
   LayoutGrid,
   Search,
+  Terminal,
   Wrench,
 } from 'lucide-react'
 import { Link, useLocation } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/Tooltip'
+import { useStaleItems } from '@/hooks/use-inventory'
+import { useActiveWorkshop } from '@/hooks/use-workshops'
+import { apiGet } from '@/lib/api'
 
 interface NavItem {
   to: string
@@ -36,28 +42,22 @@ const CATALOGUE_ITEMS: NavItem[] = [
   { to: '/catalogue/search', label: 'Search',  icon: <Search size={14} /> },
 ]
 
-const PERSONAL_ITEMS: NavItem[] = [
-  {
-    to: '/inventory',
-    label: 'Inventory',
-    icon: <Box size={14} />,
-    disabled: true,
-    disabledReason: 'Phase 4',
-  },
-  {
-    to: '/workshops',
-    label: 'Workshops',
-    icon: <FlaskConical size={14} />,
-    disabled: true,
-    disabledReason: 'Phase 4',
-  },
+const PERSONAL_BASE_ITEMS: NavItem[] = [
+  { to: '/inventory', label: 'Inventory', icon: <Box size={14} /> },
+  { to: '/workshops', label: 'Workshops', icon: <FlaskConical size={14} /> },
 ]
 
 const SYSTEM_ITEMS: NavItem[] = [
-  { to: '/settings', label: 'Settings', icon: <Cog size={14} />, disabled: true, disabledReason: 'Phase 4' },
+  { to: '/settings', label: 'Settings', icon: <Cog size={14} /> },
 ]
 
-function NavLink({ item }: { item: NavItem }) {
+const DEV_ITEMS: NavItem[] = [
+  { to: '/dev/keywords', label: 'Keywords',  icon: <Terminal size={14} /> },
+  { to: '/dev/schema',   label: 'Schema',    icon: <Database size={14} /> },
+  { to: '/dev/modules',  label: 'Modules',   icon: <Package size={14} /> },
+]
+
+function NavLink({ item, badge }: { item: NavItem; badge?: React.ReactNode }) {
   const loc = useLocation()
   const isActive = loc.pathname === item.to
 
@@ -73,7 +73,8 @@ function NavLink({ item }: { item: NavItem }) {
       )}
     >
       {item.icon}
-      {item.label}
+      <span className="flex-1">{item.label}</span>
+      {badge}
     </span>
   )
 
@@ -98,7 +99,15 @@ function NavLink({ item }: { item: NavItem }) {
   )
 }
 
-function NavSection({ label, items }: { label: string; items: NavItem[] }) {
+function NavSection({
+  label,
+  items,
+  footer,
+}: {
+  label: string
+  items: NavItem[]
+  footer?: React.ReactNode
+}) {
   return (
     <div>
       <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-text-faint mb-0.5">
@@ -109,7 +118,64 @@ function NavSection({ label, items }: { label: string; items: NavItem[] }) {
           <NavLink key={`${item.to}-${item.label}`} item={item} />
         ))}
       </div>
+      {footer}
     </div>
+  )
+}
+
+function PersonalSection() {
+  const { data: staleData } = useStaleItems()
+  const { data: activeWorkshop } = useActiveWorkshop()
+
+  const staleCount = staleData?.total ?? 0
+
+  const inventoryBadge =
+    staleCount > 0 ? (
+      <span className="text-[10px] bg-warning/15 text-warning rounded px-1 font-medium">
+        {staleCount}
+      </span>
+    ) : undefined
+
+  return (
+    <div>
+      <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-text-faint mb-0.5">
+        Personal
+      </p>
+      <div className="space-y-0.5">
+        {PERSONAL_BASE_ITEMS.map((item) => (
+          <NavLink
+            key={item.to}
+            item={item}
+            badge={item.to === '/inventory' ? inventoryBadge : undefined}
+          />
+        ))}
+      </div>
+      {activeWorkshop && (
+        <p className="px-3 pt-1.5 text-[10px] text-text-faint truncate">
+          Active: <span className="text-text-muted">{activeWorkshop.name}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
+function DevSection() {
+  const { data } = useQuery<{ dev_mode: boolean }>({
+    queryKey: ['status'],
+    queryFn: () => apiGet<{ dev_mode: boolean }>('/api/status'),
+    select: (d: Record<string, unknown>) => ({ dev_mode: Boolean((d as Record<string, unknown>).dev_mode) }),
+    staleTime: 60_000,
+  })
+
+  // Show dev section only when backend reports dev mode. Falls back gracefully.
+  const isDevMode = (data as { dev_mode?: boolean } | undefined)?.dev_mode ?? false
+  if (!isDevMode) return null
+
+  return (
+    <NavSection
+      label="Dev Tools"
+      items={DEV_ITEMS}
+    />
   )
 }
 
@@ -128,8 +194,9 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
         <NavSection label="Catalogue" items={CATALOGUE_ITEMS} />
-        <NavSection label="Personal" items={PERSONAL_ITEMS} />
+        <PersonalSection />
         <NavSection label="System" items={SYSTEM_ITEMS} />
+        <DevSection />
       </nav>
     </aside>
   )

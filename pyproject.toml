@@ -16,7 +16,11 @@ dependencies = [
     "pydantic>=2.6.0",
     "structlog>=24.1.0",
     "mcp>=1.0.0",
+    "click>=8.1.0",
 ]
+
+[project.scripts]
+makestack = "cli.main:app"
 
 [project.optional-dependencies]
 dev = [
@@ -30,4 +34,4 @@ testpaths = ["backend/tests"]
 pythonpath = ["."]
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend"]
+packages = ["backend", "makestack_sdk", "cli", "mcp_server"]
