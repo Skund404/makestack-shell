@@ -110,10 +110,13 @@ class PackageCache:
         git_url: str,
         pkg_type: str,
         version: str | None = None,
+        subdir: str = "",
     ) -> Path:
         """Clone (or update) a package repo and return its local path.
 
         If version is None or 'latest', resolves to the highest semver tag.
+        If subdir is set (monorepo package), returns target/subdir instead
+        of the repo root.
         """
         target = self._pkg_path(name, pkg_type)
 
@@ -132,6 +135,14 @@ class PackageCache:
         if resolved:
             await self._checkout(name, target, resolved)
             log.info("package_cache_checked_out", name=name, version=resolved)
+
+        if subdir:
+            pkg_path = target / subdir
+            if not pkg_path.is_dir():
+                raise RuntimeError(
+                    f"subdir '{subdir}' not found in cloned repo for package '{name}'"
+                )
+            return pkg_path
 
         return target
 

@@ -277,7 +277,7 @@ async def install_package(
             )
 
         cache_path = await package_cache.fetch(
-            info.name, git_url, info.type, body.version
+            info.name, git_url, info.type, body.version, subdir=info.subdir
         )
         package_path = str(cache_path)
         manifest = _load_package_manifest(package_path)

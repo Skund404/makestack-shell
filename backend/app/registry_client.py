@@ -48,6 +48,7 @@ class PackageInfo:
     type: str
     description: str = ""
     registry_name: str = ""
+    subdir: str = ""  # Optional subdirectory within the repo (for monorepo packages)
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,7 @@ class RegistryClient:
                     type=pkg.get("type", "module"),
                     description=pkg.get("description", ""),
                     registry_name=registry_dir.name,
+                    subdir=pkg.get("subdir", ""),
                 )
         return None
 
@@ -153,6 +155,7 @@ class RegistryClient:
                         type=pkg.get("type", "module"),
                         description=desc,
                         registry_name=registry_dir.name,
+                        subdir=pkg.get("subdir", ""),
                     ))
                     seen.add(pkg_name)
 
@@ -171,6 +174,7 @@ class RegistryClient:
                 type=pkg.get("type", "module"),
                 description=pkg.get("description", ""),
                 registry_name=registry_name,
+                subdir=pkg.get("subdir", ""),
             ))
         return results
 
