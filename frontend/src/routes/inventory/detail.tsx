@@ -54,7 +54,8 @@ function InventoryDetailView({ id }: { id: string }) {
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [editingWorkshop, setEditingWorkshop] = useState(false)
-  const [workshopId, setWorkshopId] = useState('')
+  const NONE = '__none__'
+  const [workshopId, setWorkshopId] = useState(NONE)
 
   if (isLoading) {
     return (
@@ -81,7 +82,7 @@ function InventoryDetailView({ id }: { id: string }) {
   }
 
   const workshopOptions = [
-    { value: '', label: 'No workshop' },
+    { value: NONE, label: 'No workshop' },
     ...(workshops?.items ?? []).map((w) => ({ value: w.id, label: w.name })),
   ]
   const currentWorkshopName = workshops?.items.find((w) => w.id === item.workshop_id)?.name
@@ -93,13 +94,13 @@ function InventoryDetailView({ id }: { id: string }) {
 
   const handleSaveWorkshop = () => {
     updateMutation.mutate(
-      { id, data: { workshop_id: workshopId || null } },
+      { id, data: { workshop_id: workshopId !== NONE ? workshopId : null } },
       { onSuccess: () => setEditingWorkshop(false) },
     )
   }
 
   const handleStartEditWorkshop = () => {
-    setWorkshopId(item.workshop_id ?? '')
+    setWorkshopId(item.workshop_id ?? NONE)
     setEditingWorkshop(true)
   }
 

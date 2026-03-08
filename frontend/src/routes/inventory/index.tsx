@@ -11,8 +11,10 @@ import { Select } from '@/components/ui/Select'
 import { primitiveTypeBg, abbreviateHash, formatDate } from '@/lib/utils'
 import type { InventoryItem } from '@/lib/types'
 
+const ALL = '__all__'
+
 const TYPE_OPTIONS = [
-  { value: '', label: 'All types' },
+  { value: ALL, label: 'All types' },
   { value: 'tool', label: 'Tools' },
   { value: 'material', label: 'Materials' },
   { value: 'technique', label: 'Techniques' },
@@ -73,14 +75,14 @@ const PAGE_SIZE = 24
 
 export function InventoryIndex() {
   const navigate = useNavigate()
-  const [typeFilter, setTypeFilter] = useState('')
-  const [workshopFilter, setWorkshopFilter] = useState('')
+  const [typeFilter, setTypeFilter] = useState(ALL)
+  const [workshopFilter, setWorkshopFilter] = useState(ALL)
   const [offset, setOffset] = useState(0)
   const [addOpen, setAddOpen] = useState(false)
 
   const { data, isLoading, isError } = useInventoryList(
-    workshopFilter || undefined,
-    typeFilter || undefined,
+    workshopFilter !== ALL ? workshopFilter : undefined,
+    typeFilter !== ALL ? typeFilter : undefined,
     PAGE_SIZE,
     offset,
   )
@@ -91,7 +93,7 @@ export function InventoryIndex() {
   const workshopMap = Object.fromEntries((workshops?.items ?? []).map((w) => [w.id, w.name]))
 
   const workshopOptions = [
-    { value: '', label: 'All workshops' },
+    { value: ALL, label: 'All workshops' },
     ...(workshops?.items ?? []).map((w) => ({ value: w.id, label: w.name })),
   ]
 
@@ -151,8 +153,8 @@ export function InventoryIndex() {
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3 text-text-faint">
-            <p className="text-sm">No inventory items{typeFilter || workshopFilter ? ' matching filters' : ''}.</p>
-            {!typeFilter && !workshopFilter && (
+            <p className="text-sm">No inventory items{typeFilter !== ALL || workshopFilter !== ALL ? ' matching filters' : ''}.</p>
+            {typeFilter === ALL && workshopFilter === ALL && (
               <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>
                 <Plus size={12} /> Add your first item
               </Button>

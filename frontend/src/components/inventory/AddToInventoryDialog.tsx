@@ -29,7 +29,8 @@ export function AddToInventoryDialog({
 }: AddToInventoryDialogProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPrimitive, setSelectedPrimitive] = useState<Primitive | null>(null)
-  const [workshopId, setWorkshopId] = useState('')
+  const NONE = '__none__'
+  const [workshopId, setWorkshopId] = useState(NONE)
 
   const addMutation = useAddToInventory()
   const { data: workshops } = useWorkshopList()
@@ -43,7 +44,7 @@ export function AddToInventoryDialog({
   const activeType = preselectedType ?? selectedPrimitive?.type
 
   const workshopOptions = [
-    { value: '', label: 'No workshop' },
+    { value: NONE, label: 'No workshop' },
     ...(workshops?.items ?? []).map((w) => ({ value: w.id, label: w.name })),
   ]
 
@@ -51,7 +52,7 @@ export function AddToInventoryDialog({
     if (!open) {
       setSearchQuery('')
       setSelectedPrimitive(null)
-      setWorkshopId('')
+      setWorkshopId(NONE)
     }
     onOpenChange(open)
   }
@@ -59,7 +60,7 @@ export function AddToInventoryDialog({
   const handleConfirm = () => {
     if (!activePath) return
     addMutation.mutate(
-      { catalogue_path: activePath, workshop_id: workshopId || null },
+      { catalogue_path: activePath, workshop_id: workshopId !== NONE ? workshopId : null },
       {
         onSuccess: () => {
           handleClose(false)
