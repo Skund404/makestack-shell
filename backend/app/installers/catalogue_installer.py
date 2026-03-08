@@ -65,16 +65,16 @@ class CatalogueInstaller:
 
         if not primitive_files:
             return InstallResult(
-                success=True,
+                success=False,
                 package_name=manifest.name,
                 package_type="catalogue",
                 version=manifest.version,
                 message=(
-                    f"No primitives found in catalogue '{manifest.name}'. "
-                    "Expected subdirectories: tools/, materials/, techniques/, "
-                    "workflows/, projects/, events/"
+                    f"Catalogue '{manifest.name}' contains no primitives. "
+                    "Expected manifest.json files inside: tools/, materials/, "
+                    "techniques/, workflows/, projects/, or events/ subdirectories. "
+                    "The package may not be fully published yet."
                 ),
-                warnings=["Catalogue appears to be empty."],
             )
 
         imported = 0
@@ -104,28 +104,29 @@ class CatalogueInstaller:
                     )
                     failed += 1
 
-        # Register in installed_packages for tracking.
-        existing = await self._db.fetch_one(
-            "SELECT name FROM installed_packages WHERE name = ?", [manifest.name]
-        )
-        if existing:
-            await self._db.execute(
-                """
-                UPDATE installed_packages
-                   SET version = ?, git_url = ?, package_path = ?, registry_name = ?
-                 WHERE name = ?
-                """,
-                [manifest.version, git_url, package_path, registry_name, manifest.name],
+        # Only register if at least some primitives were imported or already existed.
+        if imported + skipped > 0:
+            existing = await self._db.fetch_one(
+                "SELECT name FROM installed_packages WHERE name = ?", [manifest.name]
             )
-        else:
-            await self._db.execute(
-                """
-                INSERT INTO installed_packages
-                    (name, type, version, git_url, package_path, installed_at, registry_name)
-                VALUES (?, 'catalogue', ?, ?, ?, datetime('now'), ?)
-                """,
-                [manifest.name, manifest.version, git_url, package_path, registry_name],
-            )
+            if existing:
+                await self._db.execute(
+                    """
+                    UPDATE installed_packages
+                       SET version = ?, git_url = ?, package_path = ?, registry_name = ?
+                     WHERE name = ?
+                    """,
+                    [manifest.version, git_url, package_path, registry_name, manifest.name],
+                )
+            else:
+                await self._db.execute(
+                    """
+                    INSERT INTO installed_packages
+                        (name, type, version, git_url, package_path, installed_at, registry_name)
+                    VALUES (?, 'catalogue', ?, ?, ?, datetime('now'), ?)
+                    """,
+                    [manifest.name, manifest.version, git_url, package_path, registry_name],
+                )
 
         log.info(
             "catalogue_installed",
@@ -134,6 +135,20 @@ class CatalogueInstaller:
             skipped=skipped,
             failed=failed,
         )
+
+        success = imported + skipped > 0
+        if not success:
+            return InstallResult(
+                success=False,
+                package_name=manifest.name,
+                package_type="catalogue",
+                version=manifest.version,
+                message=(
+                    f"Catalogue '{manifest.name}' could not be imported: "
+                    f"all {failed} primitive(s) failed."
+                ),
+                warnings=warnings,
+            )
 
         return InstallResult(
             success=True,
