@@ -480,25 +480,31 @@ async def update_package(
     summary="Search packages across all registries",
 )
 async def search_packages(
-    q: str,
     request: Request,
+    q: str = "",
 ) -> dict:
     """Search package names and descriptions across all configured registries.
 
-    Returns matching packages from all registries, de-duplicated by name
-    (first-match wins in alphabetical registry order).
+    When 'q' is empty or omitted, lists all packages from all registries.
+    Returns matching packages de-duplicated by name (first-match wins in
+    alphabetical registry order).
     """
-    if not q:
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "Query parameter 'q' is required.", "suggestion": "Provide a search term."},
-        )
-
     registry_client = _get_registry_client(request)
     if registry_client is None:
         return {"items": [], "total": 0, "query": q}
 
-    results = registry_client.search(q)
+    if not q:
+        # No query — list everything from all registries.
+        from ..registry_client import PackageInfo
+        results: list[PackageInfo] = []
+        seen: set[str] = set()
+        for registry_dir in registry_client._registry_dirs():
+            for pkg in registry_client.list_packages_in_registry(registry_dir.name):
+                if pkg.name not in seen:
+                    results.append(pkg)
+                    seen.add(pkg.name)
+    else:
+        results = registry_client.search(q)
     items = [
         {
             "name": p.name,

@@ -586,7 +586,7 @@ function BrowseTab({ onInstall }: { onInstall: (name: string) => void }) {
         <input
           value={query}
           onChange={(e) => handleQueryChange(e.target.value)}
-          placeholder="Search packages across all registries…"
+          placeholder="Filter packages…"
           className={cn(
             'w-full pl-8 pr-3 py-2 text-sm rounded border border-border bg-surface',
             'text-text placeholder:text-text-faint focus:outline-none focus:border-accent/40',
@@ -598,19 +598,17 @@ function BrowseTab({ onInstall }: { onInstall: (name: string) => void }) {
         )}
       </div>
 
-      {debouncedQuery.length <= 1 && (
-        <p className="text-xs text-text-faint">Type at least 2 characters to search.</p>
-      )}
-
-      {debouncedQuery.length > 1 && isLoading && (
-        <div className="text-sm text-text-faint">Searching…</div>
+      {isLoading && (
+        <div className="text-sm text-text-muted">Loading packages…</div>
       )}
 
       {data && data.items.length === 0 && (
         <Card>
           <CardBody>
             <p className="text-sm text-text-faint text-center py-4">
-              No packages found for "{data.query}".
+              {debouncedQuery
+                ? `No packages found for "${data.query}".`
+                : 'No packages found. Add a registry in the Registries tab.'}
             </p>
           </CardBody>
         </Card>
@@ -618,7 +616,11 @@ function BrowseTab({ onInstall }: { onInstall: (name: string) => void }) {
 
       {data && data.items.length > 0 && (
         <>
-          <p className="text-xs text-text-faint">{data.total} result{data.total !== 1 ? 's' : ''} for "{data.query}"</p>
+          <p className="text-xs text-text-faint">
+            {debouncedQuery
+              ? `${data.total} result${data.total !== 1 ? 's' : ''} for "${data.query}"`
+              : `${data.total} package${data.total !== 1 ? 's' : ''} available`}
+          </p>
           <div className="space-y-2">
             {data.items.map((pkg) => (
               <BrowseResultCard

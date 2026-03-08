@@ -59,7 +59,7 @@ export function usePackageSearch(q: string) {
   return useQuery<PackageSearchResponse>({
     queryKey: ['packages', 'search', q],
     queryFn: () => apiGet<PackageSearchResponse>('/api/packages/search', { q }),
-    enabled: q.trim().length > 1,
+    enabled: true,
     staleTime: 30_000,
   })
 }
