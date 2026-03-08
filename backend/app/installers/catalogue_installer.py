@@ -90,7 +90,7 @@ class CatalogueInstaller:
                 continue
 
             try:
-                await self._core.create_primitive(raw)
+                await self._core._request("POST", "primitives", json=raw)
                 imported += 1
                 log.debug("primitive_imported", path=str(primitive_file))
             except Exception as exc:
