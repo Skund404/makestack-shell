@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Server, Database, Clock } from 'lucide-react'
-import { apiGet, apiPut } from '@/lib/api'
+import { Loader2, Server, Database, Clock, Power, RotateCcw } from 'lucide-react'
+import { apiGet, apiPut, apiPost } from '@/lib/api'
 import { applyTheme } from '@/theme/loader'
 import { cn } from '@/lib/utils'
 import type { SystemStatus } from '@/lib/types'
@@ -156,6 +156,132 @@ function SystemInfo() {
 }
 
 // ---------------------------------------------------------------------------
+// System controls — shutdown / restart
+// ---------------------------------------------------------------------------
+
+type ControlAction = 'shell-restart' | 'shell-shutdown' | 'core-shutdown' | null
+
+function SystemControls() {
+  const [confirm, setConfirm] = useState<ControlAction>(null)
+  const [done, setDone] = useState<string | null>(null)
+
+  const shellRestart = useMutation({
+    mutationFn: () => apiPost<{ message: string }>('/api/system/restart', {}),
+    onSuccess: (data) => {
+      setConfirm(null)
+      setDone(data.message)
+    },
+  })
+
+  const shellShutdown = useMutation({
+    mutationFn: () => apiPost<{ message: string }>('/api/system/shutdown', {}),
+    onSuccess: (data) => {
+      setConfirm(null)
+      setDone(data.message)
+    },
+  })
+
+  const coreShutdown = useMutation({
+    mutationFn: () => apiPost<{ message: string }>('/api/system/core/shutdown', {}),
+    onSuccess: (data) => {
+      setConfirm(null)
+      setDone(data.message)
+    },
+  })
+
+  if (done) {
+    return (
+      <div className="rounded border border-border bg-surface p-3 text-sm text-text-muted">
+        {done}
+      </div>
+    )
+  }
+
+  const ACTIONS: { id: ControlAction; label: string; description: string; icon: React.ReactNode; danger: boolean; mutation: typeof shellRestart }[] = [
+    {
+      id: 'shell-restart',
+      label: 'Restart Shell',
+      description: 'Reload modules and apply config changes without stopping Core.',
+      icon: <RotateCcw size={13} />,
+      danger: false,
+      mutation: shellRestart,
+    },
+    {
+      id: 'shell-shutdown',
+      label: 'Shutdown Shell',
+      description: 'Stop the Shell process. Core keeps running.',
+      icon: <Power size={13} />,
+      danger: true,
+      mutation: shellShutdown,
+    },
+    {
+      id: 'core-shutdown',
+      label: 'Shutdown Core',
+      description: 'Stop the Core process. Catalogue will be unavailable.',
+      icon: <Power size={13} />,
+      danger: true,
+      mutation: coreShutdown,
+    },
+  ]
+
+  return (
+    <div className="space-y-2">
+      {ACTIONS.map((action) => {
+        const isPending = action.mutation.isPending
+        const isConfirming = confirm === action.id
+
+        return (
+          <div key={action.id} className="rounded border border-border bg-surface">
+            <div className="flex items-center gap-3 px-3 py-2.5">
+              <span className={cn('shrink-0', action.danger ? 'text-danger/70' : 'text-text-faint')}>
+                {action.icon}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-text">{action.label}</p>
+                <p className="text-xs text-text-faint">{action.description}</p>
+              </div>
+              {!isConfirming ? (
+                <button
+                  onClick={() => setConfirm(action.id)}
+                  disabled={isPending || confirm !== null}
+                  className={cn(
+                    'px-2.5 py-1 rounded text-xs font-medium transition-colors shrink-0',
+                    action.danger
+                      ? 'border border-danger/30 text-danger/80 hover:bg-danger/10 disabled:opacity-40'
+                      : 'border border-border text-text-muted hover:border-border-bright hover:text-text disabled:opacity-40',
+                  )}
+                >
+                  {action.label.split(' ')[0]}
+                </button>
+              ) : (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-xs text-text-muted">Sure?</span>
+                  <button
+                    onClick={() => action.mutation.mutate()}
+                    disabled={isPending}
+                    className="px-2 py-1 rounded text-xs font-medium bg-danger/20 text-danger hover:bg-danger/30 disabled:opacity-60 flex items-center gap-1"
+                  >
+                    {isPending && <Loader2 size={10} className="animate-spin" />}
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setConfirm(null)}
+                    disabled={isPending}
+                    className="px-2 py-1 rounded text-xs text-text-muted hover:text-text"
+                  >
+                    No
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Settings page — tabbed
 // ---------------------------------------------------------------------------
 
@@ -204,9 +330,15 @@ export function SettingsIndex() {
         )}
 
         {activeTab === 'system' && (
-          <section className="space-y-3">
-            <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">System</h2>
-            <SystemInfo />
+          <section className="space-y-6">
+            <div className="space-y-3">
+              <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">System</h2>
+              <SystemInfo />
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">Controls</h2>
+              <SystemControls />
+            </div>
           </section>
         )}
       </div>

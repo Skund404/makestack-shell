@@ -466,6 +466,14 @@ class CatalogueClient:
         )
         return Primitive(**data)
 
+    async def import_primitive(self, raw: dict) -> None:
+        """POST a raw primitive dict to Core (used by catalogue package installer).
+
+        Unlike create_primitive(), this accepts an untyped dict so catalogue
+        packages can be imported without round-tripping through PrimitiveCreate.
+        """
+        await self._request("POST", "primitives", json=raw)
+
     async def update_primitive(self, path: str, payload: PrimitiveUpdate) -> Primitive:
         """Update a primitive. id, type, name, slug must be present in payload."""
         data = await self._request(

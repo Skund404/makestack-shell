@@ -1,13 +1,22 @@
 """System routes — Shell health, status, and machine-readable capabilities.
 
-GET /api/status      → Runtime state (core connection, modules loaded, uptime)
+GET /api/status       → Runtime state (core connection, modules loaded, uptime)
 GET /api/capabilities → Full operation list for MCP tool auto-generation
+POST /api/system/shutdown       → Gracefully shut down the Shell process
+POST /api/system/restart        → Restart the Shell process (exec)
+POST /api/system/core/shutdown  → Send SIGTERM to the Core process
 """
 
+import asyncio
+import os
+import signal
+import subprocess
+import sys
 import time
+from urllib.parse import urlparse
 
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..core_client import CatalogueClient
 from ..dependencies import get_core_client, get_userdb
@@ -325,7 +334,110 @@ _CAPABILITIES: list[Capability] = [
         description="Machine-readable list of all available Shell operations",
         tags=["system"],
     ),
+    Capability(
+        method="POST", path="/api/system/shutdown",
+        description="Gracefully shut down the Shell process",
+        tags=["system"],
+    ),
+    Capability(
+        method="POST", path="/api/system/restart",
+        description="Restart the Shell process",
+        tags=["system"],
+    ),
+    Capability(
+        method="POST", path="/api/system/core/shutdown",
+        description="Send SIGTERM to the Core process",
+        tags=["system"],
+    ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Process control endpoints
+# ---------------------------------------------------------------------------
+
+
+async def _shutdown_after_response() -> None:
+    await asyncio.sleep(0.4)
+    log.info("shell_shutdown_requested")
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+async def _restart_after_response() -> None:
+    await asyncio.sleep(0.4)
+    log.info("shell_restart_requested")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+def _find_pid_on_port(port: int) -> list[int]:
+    """Return PIDs listening on the given TCP port using lsof."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+    except Exception:
+        return []
+
+
+@router.post("/system/shutdown", summary="Shut down the Shell process")
+async def shutdown_shell() -> dict:
+    """Gracefully shut down the Shell process (SIGTERM).
+
+    The response is sent before the process exits.
+    """
+    asyncio.create_task(_shutdown_after_response())
+    return {"status": "shutting_down", "message": "Shell is shutting down."}
+
+
+@router.post("/system/restart", summary="Restart the Shell process")
+async def restart_shell() -> dict:
+    """Restart the Shell process using os.execv (replaces current process).
+
+    The response is sent before the restart. The UI should poll /api/status
+    until it gets a successful response.
+    """
+    asyncio.create_task(_restart_after_response())
+    return {"status": "restarting", "message": "Shell is restarting. Poll /api/status to detect when it is back."}
+
+
+@router.post("/system/core/shutdown", summary="Shut down the Core process")
+async def shutdown_core(request: Request) -> dict:
+    """Send SIGTERM to the Core process.
+
+    Finds the Core process by the port it is configured to listen on.
+    """
+    core_url: str = getattr(request.app.state, "config", {}).get(
+        "core_url", "http://localhost:8420"
+    )
+    parsed = urlparse(core_url)
+    port = parsed.port or 8420
+
+    pids = _find_pid_on_port(port)
+    if not pids:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": f"No process found listening on port {port}.",
+                "suggestion": "Core may already be stopped.",
+            },
+        )
+
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            log.info("core_shutdown_requested", pid=pid, port=port)
+        except ProcessLookupError:
+            pass
+
+    return {
+        "status": "stopping",
+        "message": f"Sent SIGTERM to Core process(es) on port {port}.",
+        "pids": pids,
+    }
 
 
 @router.get(

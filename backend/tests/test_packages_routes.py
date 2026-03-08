@@ -221,10 +221,11 @@ async def test_uninstall_widget_pack(client, db):
 
 
 @pytest.mark.asyncio
-async def test_search_requires_q_param(client):
+async def test_search_without_q_lists_all(client):
     ac, _ = client
     resp = await ac.get("/api/packages/search")
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    assert "items" in resp.json()
 
 
 @pytest.mark.asyncio

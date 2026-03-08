@@ -206,6 +206,7 @@ def mock_core():
     client = MagicMock()
     client.connected = True
     client.create_primitive = AsyncMock(return_value={"id": "created"})
+    client.import_primitive = AsyncMock(return_value=None)
     return client
 
 
@@ -240,7 +241,7 @@ async def test_catalogue_installer_imports_primitives(db: UserDB, mock_core, tmp
 
     assert result.success is True
     assert "1 added" in result.message
-    mock_core.create_primitive.assert_awaited_once()
+    mock_core.import_primitive.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -258,8 +259,8 @@ async def test_catalogue_installer_empty_directory(db: UserDB, mock_core, tmp_pa
     empty_dir.mkdir()
     installer = CatalogueInstaller(db, mock_core)
     result = await installer.install(str(empty_dir), _manifest("empty-cat", "catalogue"))
-    assert result.success is True
-    assert "No primitives found" in result.message
+    assert result.success is False
+    assert "no primitives" in result.message.lower()
 
 
 @pytest.mark.asyncio
