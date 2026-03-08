@@ -49,6 +49,7 @@ const PERSONAL_BASE_ITEMS: NavItem[] = [
 
 const SYSTEM_ITEMS: NavItem[] = [
   { to: '/settings', label: 'Settings', icon: <Cog size={14} /> },
+  { to: '/packages', label: 'Packages',  icon: <Package size={14} /> },
 ]
 
 const DEV_ITEMS: NavItem[] = [

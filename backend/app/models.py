@@ -388,6 +388,49 @@ class InstallResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# User profile models
+# ---------------------------------------------------------------------------
+
+
+class UserProfile(BaseModel):
+    """The current user's profile information."""
+
+    id: str
+    name: str
+    avatar_path: str | None = None
+    bio: str = ""
+    timezone: str = "UTC"
+    locale: str = "en"
+    created_at: str
+    updated_at: str
+
+
+class UserProfileUpdate(BaseModel):
+    """Request body for updating the user profile.
+
+    All fields are optional — only provided fields are updated.
+    """
+
+    name: str | None = None
+    avatar_path: str | None = None
+    bio: str | None = None
+    timezone: str | None = None
+    locale: str | None = None
+
+
+class UserStats(BaseModel):
+    """Activity summary for the current user."""
+
+    workshops_count: int
+    inventory_count: int
+    stale_inventory_count: int
+    modules_installed: int
+    modules_enabled: int
+    active_workshop_id: str | None = None
+    active_workshop_name: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Error detail model — included in all non-2xx responses
 # ---------------------------------------------------------------------------
 

@@ -23,7 +23,7 @@ import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from .tools import catalogue, data, inventory, modules, settings, system, version, workshops
+from .tools import catalogue, data, inventory, modules, settings, system, users, version, workshops
 
 
 def create_server(api_client: httpx.AsyncClient | None = None) -> FastMCP:
@@ -71,6 +71,7 @@ def create_server(api_client: httpx.AsyncClient | None = None) -> FastMCP:
     settings.register_tools(mcp, api_client)
     modules.register_tools(mcp, api_client)
     data.register_tools(mcp, api_client)
+    users.register_tools(mcp, api_client)
     system.register_tools(mcp, api_client)
 
     return mcp

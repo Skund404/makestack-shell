@@ -216,6 +216,22 @@ _CAPABILITIES: list[Capability] = [
     Capability(method="PUT", path="/api/settings/preferences", description="Update user preferences", tags=["settings"]),
     Capability(method="GET", path="/api/settings/theme", description="Get active theme", tags=["settings"]),
     Capability(method="PUT", path="/api/settings/theme", description="Switch active theme", tags=["settings"]),
+    # User profile
+    Capability(
+        method="GET", path="/api/users/me",
+        description="Get current user profile (name, avatar, bio, timezone, locale)",
+        tags=["users"],
+    ),
+    Capability(
+        method="PUT", path="/api/users/me",
+        description="Update current user profile",
+        tags=["users"],
+    ),
+    Capability(
+        method="GET", path="/api/users/me/stats",
+        description="Activity summary: workshop count, inventory count, module count",
+        tags=["users"],
+    ),
     # Version
     Capability(
         method="GET", path="/api/version/{path}/history",

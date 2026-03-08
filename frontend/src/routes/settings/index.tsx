@@ -1,11 +1,16 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Server, Database, Clock } from 'lucide-react'
 import { apiGet, apiPut } from '@/lib/api'
 import { applyTheme } from '@/theme/loader'
-import { Separator } from '@/components/ui/Separator'
 import { cn } from '@/lib/utils'
 import type { SystemStatus } from '@/lib/types'
 import type { ThemeData } from '@/theme/tokens'
+import { ProfileSettings } from './profile'
+
+// ---------------------------------------------------------------------------
+// Theme tab
+// ---------------------------------------------------------------------------
 
 const THEMES = [
   { value: 'cyberpunk', label: 'Cyberpunk' },
@@ -35,6 +40,60 @@ function ThemeSwatches({ name }: { name: string }) {
     </div>
   )
 }
+
+function ThemeSettings() {
+  const qc = useQueryClient()
+
+  const { data: themeData } = useQuery({
+    queryKey: ['active-theme'],
+    queryFn: () => apiGet<{ name: string }>('/api/settings/theme'),
+  })
+
+  const themeMutation = useMutation({
+    mutationFn: async (name: string) => {
+      await apiPut<{ name: string }>('/api/settings/theme', { name })
+      const vars = await apiGet<ThemeData>('/api/settings/theme/data')
+      applyTheme(vars)
+      return name
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['active-theme'] })
+    },
+  })
+
+  const activeTheme = themeData?.name ?? 'cyberpunk'
+
+  return (
+    <div className="space-y-2">
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          onClick={() => themeMutation.mutate(t.value)}
+          disabled={themeMutation.isPending}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2.5 rounded border text-sm transition-colors text-left',
+            activeTheme === t.value
+              ? 'border-accent/40 bg-accent/5 text-text'
+              : 'border-border hover:border-border-bright text-text-muted hover:text-text',
+          )}
+        >
+          <ThemeSwatches name={t.value} />
+          <span className="flex-1">{t.label}</span>
+          {activeTheme === t.value && (
+            <span className="text-xs text-accent">Active</span>
+          )}
+          {themeMutation.isPending && themeMutation.variables === t.value && (
+            <Loader2 size={12} className="animate-spin text-text-faint" />
+          )}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// System tab
+// ---------------------------------------------------------------------------
 
 function SystemInfo() {
   const { data, isLoading, isError } = useQuery({
@@ -96,68 +155,61 @@ function SystemInfo() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Settings page — tabbed
+// ---------------------------------------------------------------------------
+
+const TABS = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'theme',   label: 'Theme' },
+  { id: 'system',  label: 'System' },
+] as const
+
+type TabId = typeof TABS[number]['id']
+
 export function SettingsIndex() {
-  const qc = useQueryClient()
-
-  const { data: themeData } = useQuery({
-    queryKey: ['active-theme'],
-    queryFn: () => apiGet<{ name: string }>('/api/settings/theme'),
-  })
-
-  const themeMutation = useMutation({
-    mutationFn: async (name: string) => {
-      await apiPut<{ name: string }>('/api/settings/theme', { name })
-      const vars = await apiGet<ThemeData>('/api/settings/theme/data')
-      applyTheme(vars)
-      return name
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['active-theme'] })
-    },
-  })
-
-  const activeTheme = themeData?.name ?? 'cyberpunk'
+  const [activeTab, setActiveTab] = useState<TabId>('profile')
 
   return (
-    <div className="p-4 max-w-2xl space-y-6">
+    <div className="p-4 max-w-2xl space-y-4">
       <h1 className="text-base font-semibold text-text">Settings</h1>
 
-      {/* Theme */}
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">Theme</h2>
-        <div className="space-y-2">
-          {THEMES.map((t) => (
-            <button
-              key={t.value}
-              onClick={() => themeMutation.mutate(t.value)}
-              disabled={themeMutation.isPending}
-              className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded border text-sm transition-colors text-left',
-                activeTheme === t.value
-                  ? 'border-accent/40 bg-accent/5 text-text'
-                  : 'border-border hover:border-border-bright text-text-muted hover:text-text',
-              )}
-            >
-              <ThemeSwatches name={t.value} />
-              <span className="flex-1">{t.label}</span>
-              {activeTheme === t.value && (
-                <span className="text-xs text-accent">Active</span>
-              )}
-              {themeMutation.isPending && themeMutation.variables === t.value && (
-                <Loader2 size={12} className="animate-spin text-text-faint" />
-              )}
-            </button>
-          ))}
-        </div>
-      </section>
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-border">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              'px-3 py-1.5 text-sm transition-colors -mb-px border-b-2',
+              activeTab === tab.id
+                ? 'text-text border-accent'
+                : 'text-text-muted border-transparent hover:text-text hover:border-border-bright',
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      <Separator />
+      {/* Tab content */}
+      <div className="pt-1">
+        {activeTab === 'profile' && <ProfileSettings />}
 
-      {/* System info */}
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">System</h2>
-        <SystemInfo />
-      </section>
+        {activeTab === 'theme' && (
+          <section className="space-y-3">
+            <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">Theme</h2>
+            <ThemeSettings />
+          </section>
+        )}
+
+        {activeTab === 'system' && (
+          <section className="space-y-3">
+            <h2 className="text-xs font-semibold text-text-faint uppercase tracking-widest">System</h2>
+            <SystemInfo />
+          </section>
+        )}
+      </div>
     </div>
   )
 }

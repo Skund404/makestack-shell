@@ -140,6 +140,46 @@ export interface WorkshopUpdate {
   sort_order?: number
 }
 
+// ---------------------------------------------------------------------------
+// Package and registry types
+// ---------------------------------------------------------------------------
+
+export interface InstalledPackage {
+  name: string
+  type: string              // module | widget-pack | catalogue | data
+  version: string
+  installed_at: string
+  package_path: string | null
+  git_url: string | null
+  registry_name: string | null
+}
+
+export interface PackageSearchResult {
+  name: string
+  type: string
+  description: string | null
+  git_url: string | null
+  registry: string
+}
+
+export interface InstallResult {
+  success: boolean
+  package_name: string
+  package_type: string
+  version: string
+  restart_required: boolean
+  message: string
+  warnings: string[]
+}
+
+export interface RegistryRecord {
+  name: string
+  git_url: string
+  added_at: string
+  last_refreshed: string | null
+  package_count: number
+}
+
 export interface SystemStatus {
   shell_version: string
   core_connected: boolean

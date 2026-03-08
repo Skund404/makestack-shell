@@ -294,7 +294,7 @@ def create_app() -> FastAPI:
     their own overrides before importing.
     """
     # Import routers here to avoid circular imports at module load time.
-    from .routers import catalogue, data, dev, inventory, modules, packages, settings, system, version, workshops
+    from .routers import catalogue, data, dev, inventory, modules, packages, settings, system, users, version, workshops
 
     app = FastAPI(
         title="Makestack Shell",
@@ -342,6 +342,7 @@ def create_app() -> FastAPI:
     app.include_router(workshops.router)
     app.include_router(version.router)
     app.include_router(settings.router)
+    app.include_router(users.router)
     app.include_router(modules.router)
     app.include_router(packages.router)
     app.include_router(data.router)
