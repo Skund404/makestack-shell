@@ -144,8 +144,11 @@ export interface SystemStatus {
   shell_version: string
   core_connected: boolean
   core_url: string
+  last_core_check: string | null
   modules_loaded: number
   modules_failed: number
   userdb_path: string
   uptime_seconds: number
+  cache_size: number
+  dev_mode?: boolean
 }

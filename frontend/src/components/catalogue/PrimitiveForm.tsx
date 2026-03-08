@@ -133,6 +133,7 @@ export function PrimitiveForm({ initial, onSubmit, isSubmitting, mode }: Primiti
     initial?.properties ? JSON.stringify(initial.properties, null, 2) : '{}'
   )
   const [propsError, setPropsError] = useState('')
+  const [stepsError, setStepsError] = useState('')
   const [stepsRaw, setStepsRaw] = useState(() => {
     const steps = (initial?.manifest?.steps as unknown[] | undefined) ?? []
     return steps.length > 0 ? JSON.stringify(steps, null, 2) : ''
@@ -158,9 +159,13 @@ export function PrimitiveForm({ initial, onSubmit, isSubmitting, mode }: Primiti
       try {
         const parsed = JSON.parse(stepsRaw) as unknown
         steps = Array.isArray(parsed) ? parsed : undefined
+        setStepsError('')
       } catch {
+        setStepsError('Invalid JSON')
         return
       }
+    } else {
+      setStepsError('')
     }
 
     if (mode === 'edit' && initial) {
@@ -226,6 +231,7 @@ export function PrimitiveForm({ initial, onSubmit, isSubmitting, mode }: Primiti
             placeholder='[{"text": "First step..."}, "Second step as plain string"]'
             className="w-full px-3 py-2 rounded border bg-surface-el text-text text-xs border-border-bright font-mono placeholder:text-text-faint focus:outline-none focus:border-accent/40 min-h-[100px] resize-y"
           />
+          {stepsError && <p className="text-xs text-danger">{stepsError}</p>}
         </div>
       )}
 

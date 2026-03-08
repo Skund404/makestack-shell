@@ -34,9 +34,9 @@ export function RelationshipsPanel({ path }: RelationshipsPanelProps) {
 
   return (
     <div className="space-y-1">
-      {data.map((rel, i) => (
+      {data.map((rel) => (
         <RelationshipRow
-          key={i}
+          key={`${rel.relationship_type}:${rel.target_path}`}
           rel={rel}
           onNavigate={(p) => void navigate({ to: '/catalogue/detail', search: { path: p, at: undefined } })}
         />

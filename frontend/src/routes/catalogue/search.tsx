@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Search, Loader2 } from 'lucide-react'
 import { useSearch } from '@/hooks/use-catalogue'
 import { PrimitiveCard } from '@/components/catalogue/PrimitiveCard'
@@ -10,17 +10,15 @@ interface CatalogueSearchProps {
 export function CatalogueSearch({ initialQuery = '' }: CatalogueSearchProps) {
   const [query, setQuery] = useState(initialQuery)
   const [debouncedQuery, setDebouncedQuery] = useState(initialQuery)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data, isLoading, isFetching } = useSearch(debouncedQuery)
 
-  const handleChange = (val: string) => {
+  const handleChange = useCallback((val: string) => {
     setQuery(val)
-    clearTimeout((handleChange as { _t?: ReturnType<typeof setTimeout> })._t)
-    ;(handleChange as { _t?: ReturnType<typeof setTimeout> })._t = setTimeout(
-      () => setDebouncedQuery(val),
-      300,
-    )
-  }
+    if (timerRef.current !== null) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setDebouncedQuery(val), 300)
+  }, [])
 
   return (
     <div className="p-4 space-y-4 max-w-4xl">

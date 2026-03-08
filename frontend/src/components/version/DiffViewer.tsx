@@ -89,7 +89,7 @@ export function DiffViewer({ path, fromHash, toHash }: DiffViewerProps) {
             <span>After</span>
           </div>
           {data.changes.map((change, i) => (
-            <ChangeRow key={i} change={change} />
+            <ChangeRow key={`${change.field}-${i}`} change={change} />
           ))}
         </div>
       )}

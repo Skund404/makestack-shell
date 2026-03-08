@@ -5,18 +5,7 @@
  * Components use this to show the connection indicator and stale data banner.
  */
 import { useQuery } from '@tanstack/react-query'
-
-interface SystemStatus {
-  shell_version: string
-  core_connected: boolean
-  core_url: string
-  last_core_check: string | null
-  modules_loaded: number
-  modules_failed: number
-  userdb_path: string
-  uptime_seconds: number
-  cache_size: number
-}
+import type { SystemStatus } from '@/lib/types'
 
 export function useSystemStatus() {
   return useQuery<SystemStatus>({

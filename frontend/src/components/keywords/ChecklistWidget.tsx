@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { KeywordContext } from '@/modules/keyword-resolver'
 
 interface ChecklistItem {
@@ -13,13 +13,21 @@ interface ChecklistWidgetProps {
 }
 
 export function ChecklistWidget({ value, context: _context }: ChecklistWidgetProps) {
-  const rawItems: ChecklistItem[] = Array.isArray(value)
-    ? (value as Array<string | ChecklistItem>).map((item) =>
-        typeof item === 'string' ? { text: item, checked: false } : item,
-      )
-    : []
+  const rawItems = useMemo<ChecklistItem[]>(
+    () =>
+      Array.isArray(value)
+        ? (value as Array<string | ChecklistItem>).map((item) =>
+            typeof item === 'string' ? { text: item, checked: false } : item,
+          )
+        : [],
+    [value],
+  )
 
   const [checked, setChecked] = useState<boolean[]>(() => rawItems.map((i) => i.checked ?? false))
+
+  useEffect(() => {
+    setChecked(rawItems.map((i) => i.checked ?? false))
+  }, [rawItems])
 
   const toggle = (idx: number) =>
     setChecked((prev) => prev.map((v, i) => (i === idx ? !v : v)))
