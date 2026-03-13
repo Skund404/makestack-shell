@@ -96,6 +96,43 @@ async def enable_module(
     return _row_to_module(updated, registry)
 
 
+@router.get("/{name}/views", summary="Get views and panels declared by a module")
+async def get_module_views(
+    name: str,
+    request: Request = None,
+) -> dict:
+    """Return the views and panels declared in a loaded module's manifest.
+
+    views: nav entries the module can register for workshop sidebars.
+    panels: home panels the module can register for workshop home screens.
+
+    Returns 404 if the module is not currently loaded (even if installed).
+    """
+    registry = getattr(request.app.state, "module_registry", None) if request else None
+    if registry is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Module registry unavailable",
+                "suggestion": "The Shell has not finished starting up",
+            },
+        )
+    loaded = registry.get_module(name)
+    if loaded is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "Module not loaded",
+                "name": name,
+                "suggestion": "Use GET /api/modules to list loaded modules",
+            },
+        )
+    return {
+        "views": [v.model_dump() for v in loaded.manifest.views],
+        "panels": [p.model_dump() for p in loaded.manifest.panels],
+    }
+
+
 @router.put("/{name}/disable", response_model=InstalledModule, summary="Disable a module")
 async def disable_module(
     name: str,

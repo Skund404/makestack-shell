@@ -155,3 +155,67 @@ def register_tools(mcp: FastMCP, api: httpx.AsyncClient) -> None:
             return json.dumps(resp.json(), indent=2)
         except Exception as exc:
             return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def list_workshop_modules(workshop_id: str) -> str:
+        """List all module associations for a workshop.
+
+        Returns every module associated with the workshop regardless of whether
+        the module is currently loaded. Use get_workshop_nav to see only modules
+        that are both associated and loaded (the effective nav).
+        """
+        try:
+            resp = await api.get(f"/api/workshops/{workshop_id}/modules")
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def add_module_to_workshop(
+        workshop_id: str,
+        module_name: str,
+        sort_order: int = 0,
+    ) -> str:
+        """Associate a module with a workshop.
+
+        Idempotent — if the association already exists, returns the existing record.
+        The module does not need to be currently loaded to create an association.
+        sort_order controls the position of the module in the workshop nav.
+        """
+        body: dict = {"module_name": module_name, "sort_order": sort_order}
+        try:
+            resp = await api.post(f"/api/workshops/{workshop_id}/modules", json=body)
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def remove_module_from_workshop(workshop_id: str, module_name: str) -> str:
+        """Remove a module association from a workshop.
+
+        The module itself and its data are unaffected — only the association is removed.
+        Use list_workshop_modules to see current associations before removing.
+        Returns success confirmation or an error if the association was not found.
+        """
+        try:
+            resp = await api.delete(f"/api/workshops/{workshop_id}/modules/{module_name}")
+            if resp.status_code == 204:
+                return json.dumps({"success": True, "workshop_id": workshop_id, "module_name": module_name})
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def get_workshop_nav(workshop_id: str) -> str:
+        """Get the computed nav item list for a workshop.
+
+        Returns only modules that are both associated with the workshop (in the DB,
+        enabled=1) AND currently loaded in the module registry. Unloaded modules are
+        silently absent — their associations are never removed.
+        Shell fallback views (Inventory, Catalogue, Workshops) are always included.
+        """
+        try:
+            resp = await api.get(f"/api/workshops/{workshop_id}/nav")
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})

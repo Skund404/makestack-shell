@@ -196,6 +196,45 @@ class ActiveWorkshopSet(BaseModel):
     workshop_id: str | None = None  # None = clear active workshop
 
 
+class WorkshopModule(BaseModel):
+    """A module associated with a workshop."""
+
+    workshop_id: str
+    module_name: str
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class WorkshopModuleAdd(BaseModel):
+    """Request body for associating a module with a workshop."""
+
+    module_name: str
+    sort_order: int = 0
+
+
+class WorkshopModuleUpdate(BaseModel):
+    """Request body for updating a workshop-module association."""
+
+    sort_order: int
+
+
+class NavItem(BaseModel):
+    """A single navigation item for a workshop's sidebar."""
+
+    id: str
+    label: str
+    route: str
+    icon: str = ""
+    source: str  # 'module' | 'shell'
+    replaces_shell_view: str | None = None  # signals frontend to demote that shell view
+
+
+class WorkshopNav(BaseModel):
+    """Computed nav for a workshop — module items intersected with loaded registry."""
+
+    items: list[NavItem]
+
+
 # ---------------------------------------------------------------------------
 # Version history and diff models
 # ---------------------------------------------------------------------------

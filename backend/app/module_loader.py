@@ -33,7 +33,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, FastAPI
 
-from .module_manifest import ModuleManifest, ModuleEndpoint, ModulePanel
+from .module_manifest import ModuleManifest, ModuleEndpoint, ModulePanel, ModuleView
 from .userdb import UserDB
 
 log = structlog.get_logger().bind(component="module_loader")
@@ -76,10 +76,24 @@ class ModuleRegistry:
     def __init__(self) -> None:
         self._loaded: list[LoadedModule] = []
         self._failed: list[FailedModule] = []
+        # Tracks which module last claimed each shell view via replaces_shell_view.
+        # At most one module may claim each view; last-to-load wins (with a warning).
+        self._shell_view_claims: dict[str, str] = {}  # shell_view_id → module_name
 
     # --- Mutation (only during startup) ---
 
     def _add_loaded(self, m: LoadedModule) -> None:
+        for view in m.manifest.views:
+            if view.replaces_shell_view:
+                existing = self._shell_view_claims.get(view.replaces_shell_view)
+                if existing:
+                    log.warning(
+                        "shell_view_claim_conflict",
+                        shell_view=view.replaces_shell_view,
+                        existing_module=existing,
+                        new_module=m.name,
+                    )
+                self._shell_view_claims[view.replaces_shell_view] = m.name
         self._loaded.append(m)
 
     def _add_failed(self, name: str, error: str) -> None:
@@ -107,12 +121,32 @@ class ModuleRegistry:
                 result[kw.keyword] = m.name
         return result
 
+    def get_all_views(self) -> list[dict]:
+        """Return all module views with module context, ordered by sort_order."""
+        result = []
+        for m in self._loaded:
+            for view in m.manifest.views:
+                result.append({"module": m.name, **view.model_dump()})
+        result.sort(key=lambda v: v["sort_order"])
+        return result
+
+    def get_module_views(self, name: str) -> list[ModuleView]:
+        """Return the declared views for a loaded module, or [] if not loaded."""
+        loaded = self.get_module(name)
+        return list(loaded.manifest.views) if loaded else []
+
     def get_all_panels(self) -> list[dict]:
+        """Return all module panels with module context."""
         result = []
         for m in self._loaded:
             for panel in m.manifest.panels:
                 result.append({"module": m.name, **panel.model_dump()})
         return result
+
+    def get_module_panels(self, name: str) -> list[ModulePanel]:
+        """Return the declared panels for a loaded module, or [] if not loaded."""
+        loaded = self.get_module(name)
+        return list(loaded.manifest.panels) if loaded else []
 
     def get_all_endpoints(self) -> list[dict]:
         """Return all module API endpoints with module context (for MCP generation)."""

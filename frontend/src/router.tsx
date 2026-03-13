@@ -14,6 +14,8 @@ import { InventoryIndex } from '@/routes/inventory/index'
 import { InventoryDetail } from '@/routes/inventory/detail'
 import { WorkshopsIndex } from '@/routes/workshops/index'
 import { WorkshopsDetail } from '@/routes/workshops/detail'
+import { WorkshopHome } from '@/routes/workshops/home'
+import { WorkshopSettings } from '@/routes/workshops/settings'
 import { SettingsIndex } from '@/routes/settings/index'
 import { DevKeywords } from '@/routes/dev/keywords'
 import { DevSchema } from '@/routes/dev/schema'
@@ -144,6 +146,26 @@ const workshopsDetailRoute = createRoute({
   },
 })
 
+const workshopHomeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workshop/$id',
+  validateSearch: () => ({} as Record<never, never>),
+  component: function WorkshopHomePage() {
+    const { id } = workshopHomeRoute.useParams()
+    return <WorkshopHome id={id} />
+  },
+})
+
+const workshopSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workshop/$id/settings',
+  validateSearch: () => ({} as Record<never, never>),
+  component: function WorkshopSettingsPage() {
+    const { id } = workshopSettingsRoute.useParams()
+    return <WorkshopSettings id={id} />
+  },
+})
+
 // ---------------------------------------------------------------------------
 // Settings route
 // ---------------------------------------------------------------------------
@@ -206,6 +228,8 @@ const routeTree = rootRoute.addChildren([
   inventoryDetailRoute,
   workshopsRoute,
   workshopsDetailRoute,
+  workshopHomeRoute,
+  workshopSettingsRoute,
   settingsRoute,
   packagesRoute,
   devKeywordsRoute,

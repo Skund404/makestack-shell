@@ -138,6 +138,16 @@ async def test_app(db: UserDB, mock_core: MagicMock) -> FastAPI:
     import time
     application.state.start_time = time.monotonic()
 
+    # Module registry — empty by default. Tests that need specific behavior can
+    # override attributes: test_app.state.module_registry.is_loaded = lambda n: n == "..."
+    from unittest.mock import MagicMock as _MagicMock
+    _registry = _MagicMock()
+    _registry.is_loaded = _MagicMock(return_value=False)
+    _registry.get_module = _MagicMock(return_value=None)
+    _registry.get_module_views = _MagicMock(return_value=[])
+    _registry.get_module_panels = _MagicMock(return_value=[])
+    application.state.module_registry = _registry
+
     # Override FastAPI dependencies.
     application.dependency_overrides[get_userdb] = lambda: db
     application.dependency_overrides[get_core_client] = lambda: mock_core

@@ -10,6 +10,33 @@ This package provides five SDK surfaces for module authors:
 6. get_logger       — pre-tagged structlog logger
 7. Testing          — mock objects for module tests
 
+Manifest schema (manifest.json)
+--------------------------------
+Modules declare their capabilities in manifest.json. Key optional fields:
+
+``views`` — list of ModuleView objects, each registering a sidebar nav entry
+for workshops that have this module associated. Fields:
+  - id (str): unique within the module, used as the NavItem id
+  - label (str): human-readable nav label
+  - route (str): frontend route, e.g. "/modules/my-module/dashboard"
+  - icon (str): Lucide icon name (optional, empty = default)
+  - replaces_shell_view (str | None): one of "inventory", "workshops",
+    "catalogue". Signals the frontend to demote that shell view to secondary
+    position. Shell views are never removed — only visually demoted. At most
+    one loaded module may claim each shell view; last-to-load wins.
+  - sort_order (int, default 0): controls ordering within the workshop nav
+
+``panels`` — list of ModulePanel objects, registering panels for the workshop
+home screen. Fields:
+  - id (str): registered in the frontend PanelRegistry (panelId → component).
+    Unresolved ids render as <UnknownPanel>, never throw.
+  - label (str): human-readable panel title
+  - size ("full" | "half" | "third"): layout slot size on the home screen
+
+Both fields are optional. Manifests without them remain valid. Existing modules
+that do not declare views still appear in workshop nav as a default entry (using
+the module name as label and /modules/{name} as route).
+
 All SDK surfaces are injected via FastAPI Depends(). Module authors should
 not construct these classes directly.
 

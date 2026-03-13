@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from backend.app.module_manifest import ModuleManifest, ModuleKeyword, ModuleTable
+from backend.app.module_manifest import ModuleManifest, ModuleKeyword, ModulePanel, ModuleTable, ModuleView
 
 
 # ---------------------------------------------------------------------------
@@ -180,3 +180,118 @@ def test_defaults():
     assert m.dependencies == {}
     assert m.peer_modules == {}
     assert m.config_defaults == {}
+    assert m.views == []
+    assert m.panels == []
+
+
+# ---------------------------------------------------------------------------
+# ModuleView
+# ---------------------------------------------------------------------------
+
+
+def test_valid_module_view():
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "views": [{"id": "dashboard", "label": "Dashboard", "route": "/modules/test-module/dashboard"}],
+    })
+    assert len(m.views) == 1
+    assert m.views[0].id == "dashboard"
+    assert m.views[0].label == "Dashboard"
+    assert m.views[0].route == "/modules/test-module/dashboard"
+    assert m.views[0].icon == ""
+    assert m.views[0].replaces_shell_view is None
+    assert m.views[0].sort_order == 0
+
+
+def test_module_view_with_replaces_shell_view():
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "views": [
+            {"id": "inv", "label": "My Inventory", "route": "/modules/test-module/inv",
+             "replaces_shell_view": "inventory"},
+        ],
+    })
+    assert m.views[0].replaces_shell_view == "inventory"
+
+
+@pytest.mark.parametrize("shell_view", ["inventory", "workshops", "catalogue"])
+def test_valid_replaces_shell_view_values(shell_view):
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "views": [{"id": "v", "label": "V", "route": "/x", "replaces_shell_view": shell_view}],
+    })
+    assert m.views[0].replaces_shell_view == shell_view
+
+
+def test_invalid_replaces_shell_view():
+    with pytest.raises(ValidationError):
+        ModuleManifest.model_validate({
+            **VALID_MANIFEST,
+            "views": [{"id": "v", "label": "V", "route": "/x", "replaces_shell_view": "settings"}],
+        })
+
+
+def test_module_view_with_sort_order_and_icon():
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "views": [
+            {"id": "v1", "label": "A", "route": "/a", "sort_order": 10, "icon": "package"},
+            {"id": "v2", "label": "B", "route": "/b", "sort_order": 5},
+        ],
+    })
+    assert m.views[0].sort_order == 10
+    assert m.views[0].icon == "package"
+    assert m.views[1].sort_order == 5
+
+
+def test_manifest_views_optional():
+    """Manifests without views are valid."""
+    m = ModuleManifest.model_validate(VALID_MANIFEST)
+    assert m.views == []
+
+
+# ---------------------------------------------------------------------------
+# ModulePanel (updated schema)
+# ---------------------------------------------------------------------------
+
+
+def test_valid_module_panel():
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "panels": [{"id": "stock-summary", "label": "Stock Summary", "size": "half"}],
+    })
+    assert len(m.panels) == 1
+    assert m.panels[0].id == "stock-summary"
+    assert m.panels[0].label == "Stock Summary"
+    assert m.panels[0].size == "half"
+
+
+@pytest.mark.parametrize("size", ["full", "half", "third"])
+def test_valid_panel_sizes(size):
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "panels": [{"id": "p", "label": "Panel", "size": size}],
+    })
+    assert m.panels[0].size == size
+
+
+def test_invalid_panel_size():
+    with pytest.raises(ValidationError):
+        ModuleManifest.model_validate({
+            **VALID_MANIFEST,
+            "panels": [{"id": "p", "label": "Panel", "size": "quarter"}],
+        })
+
+
+def test_panel_default_size():
+    m = ModuleManifest.model_validate({
+        **VALID_MANIFEST,
+        "panels": [{"id": "p", "label": "Panel"}],
+    })
+    assert m.panels[0].size == "half"
+
+
+def test_manifest_panels_optional():
+    """Manifests without panels are valid."""
+    m = ModuleManifest.model_validate(VALID_MANIFEST)
+    assert m.panels == []

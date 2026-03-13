@@ -6,6 +6,7 @@ The Shell validates this at load time before mounting anything.
 """
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -32,13 +33,50 @@ class ModuleEndpoint(BaseModel):
     parameters: dict | None = None  # JSON Schema for input parameters
 
 
-class ModulePanel(BaseModel):
-    """A frontend panel registered by a module."""
+_VALID_SHELL_VIEWS = frozenset({"inventory", "workshops", "catalogue"})
+
+
+class ModuleView(BaseModel):
+    """A nav entry declared by a module for workshop sidebars.
+
+    Each view registers one entry in the workshop nav when both conditions hold:
+      1. The module is loaded in the registry.
+      2. The module is associated with the workshop (workshop_modules table, enabled=1).
+
+    replaces_shell_view: if set, signals the frontend to demote the named shell view
+    to the secondary shell layer. Shell views are never removed — only demoted.
+    At most one loaded module may claim each shell view; last-to-load wins.
+    """
 
     id: str
-    display_name: str
-    location: str               # sidebar | dashboard | detail:{type} | project | inventory
-    component: str              # Component name in the frontend
+    label: str
+    route: str
+    icon: str = ""              # Lucide icon name (empty = default module icon)
+    replaces_shell_view: str | None = None  # 'inventory' | 'workshops' | 'catalogue'
+    sort_order: int = 0
+
+    @field_validator("replaces_shell_view")
+    @classmethod
+    def validate_replaces_shell_view(cls, v: str | None) -> str | None:
+        if v is not None and v not in _VALID_SHELL_VIEWS:
+            raise ValueError(
+                f"replaces_shell_view '{v}' is invalid — must be one of: "
+                f"{', '.join(sorted(_VALID_SHELL_VIEWS))}"
+            )
+        return v
+
+
+class ModulePanel(BaseModel):
+    """A frontend panel registered by a module for the workshop home.
+
+    The component is resolved frontend-side via PanelRegistry (panelId → React component).
+    No component path is stored here — that is a build-time concern.
+    Unresolved panel ids render as <UnknownPanel> — they never throw.
+    """
+
+    id: str
+    label: str
+    size: Literal["full", "half", "third"] = "half"
 
 
 class ModuleTable(BaseModel):
@@ -79,6 +117,7 @@ class ModuleManifest(BaseModel):
     has_frontend: bool = False
     keywords: list[ModuleKeyword] = []
     api_endpoints: list[ModuleEndpoint] = []
+    views: list[ModuleView] = []
     panels: list[ModulePanel] = []
     userdb_tables: list[ModuleTable] = []
     dependencies: dict = {}             # {"python": [...], "node": [...]}

@@ -1,8 +1,9 @@
 import { ChevronDown, Search } from 'lucide-react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { useState, useRef } from 'react'
-import { useWorkshopList, useActiveWorkshop, useSetActiveWorkshop } from '@/hooks/use-workshops'
+import { useWorkshopList } from '@/hooks/use-workshops'
 import { useSystemStatus } from '@/hooks/use-status'
+import { useWorkshopContext } from '@/context/WorkshopContext'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -34,8 +35,7 @@ function Breadcrumb() {
 
 function WorkshopSwitcher() {
   const { data: workshops } = useWorkshopList()
-  const { data: activeWorkshop } = useActiveWorkshop()
-  const setActiveMutation = useSetActiveWorkshop()
+  const { activeWorkshop, switchWorkshop } = useWorkshopContext()
 
   const activeLabel = activeWorkshop?.name ?? 'All'
 
@@ -50,15 +50,13 @@ function WorkshopSwitcher() {
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>Workshop context</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={() => setActiveMutation.mutate(null)}
-        >
+        <DropdownMenuItem onSelect={() => switchWorkshop(null)}>
           <span className={!activeWorkshop ? 'text-accent' : undefined}>All</span>
         </DropdownMenuItem>
         {(workshops?.items ?? []).map((ws) => (
           <DropdownMenuItem
             key={ws.id}
-            onSelect={() => setActiveMutation.mutate(ws.id)}
+            onSelect={() => switchWorkshop(ws.id)}
           >
             <span className={activeWorkshop?.id === ws.id ? 'text-accent' : undefined}>
               {ws.name}

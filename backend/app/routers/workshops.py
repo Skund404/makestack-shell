@@ -8,17 +8,22 @@ import uuid
 from datetime import datetime, timezone
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import Path as FPath
 
 from ..dependencies import get_userdb
 from ..models import (
     ActiveWorkshopSet,
+    NavItem,
     PaginatedList,
     Workshop,
     WorkshopCreate,
     WorkshopMember,
     WorkshopMemberAdd,
+    WorkshopModule,
+    WorkshopModuleAdd,
+    WorkshopModuleUpdate,
+    WorkshopNav,
     WorkshopUpdate,
     WorkshopWithMembers,
 )
@@ -336,3 +341,228 @@ async def remove_member(
         [workshop_id, path],
     )
     log.info("workshop_member_removed", workshop_id=workshop_id, path=path)
+
+
+# ---------------------------------------------------------------------------
+# Module associations — list / add / remove
+# ---------------------------------------------------------------------------
+
+_SHELL_NAV_ITEMS = [
+    NavItem(id="inventory", label="Inventory", route="/inventory", icon="package", source="shell"),
+    NavItem(id="catalogue", label="Catalogue", route="/catalogue", icon="book", source="shell"),
+    NavItem(id="workshops", label="Workshops", route="/workshops", icon="layers", source="shell"),
+]
+
+
+@router.get(
+    "/{workshop_id}/modules",
+    response_model=list[WorkshopModule],
+    summary="List modules associated with a workshop",
+)
+async def list_workshop_modules(
+    workshop_id: str = FPath(...),
+    db: UserDB = Depends(get_userdb),
+) -> list[WorkshopModule]:
+    """List all module associations for a workshop, ordered by sort_order then name."""
+    await _get_or_404(workshop_id, db)
+    rows = await db.fetch_all(
+        "SELECT * FROM workshop_modules WHERE workshop_id = ? ORDER BY sort_order ASC, module_name ASC",
+        [workshop_id],
+    )
+    return [
+        WorkshopModule(
+            workshop_id=r["workshop_id"],
+            module_name=r["module_name"],
+            sort_order=r["sort_order"],
+            enabled=bool(r["enabled"]),
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/{workshop_id}/modules",
+    response_model=WorkshopModule,
+    status_code=201,
+    summary="Associate a module with a workshop",
+)
+async def add_workshop_module(
+    workshop_id: str = FPath(...),
+    payload: WorkshopModuleAdd = ...,
+    db: UserDB = Depends(get_userdb),
+) -> WorkshopModule:
+    """Associate a module with a workshop.
+
+    Idempotent — if the association already exists, returns the existing record.
+    The module does not need to be loaded for the association to be stored.
+    """
+    await _get_or_404(workshop_id, db)
+
+    existing = await db.fetch_one(
+        "SELECT * FROM workshop_modules WHERE workshop_id = ? AND module_name = ?",
+        [workshop_id, payload.module_name],
+    )
+    if existing:
+        return WorkshopModule(
+            workshop_id=workshop_id,
+            module_name=existing["module_name"],
+            sort_order=existing["sort_order"],
+            enabled=bool(existing["enabled"]),
+        )
+
+    await db.execute(
+        "INSERT INTO workshop_modules (workshop_id, module_name, sort_order, enabled) VALUES (?, ?, ?, 1)",
+        [workshop_id, payload.module_name, payload.sort_order],
+    )
+    log.info("workshop_module_added", workshop_id=workshop_id, module=payload.module_name)
+    return WorkshopModule(
+        workshop_id=workshop_id,
+        module_name=payload.module_name,
+        sort_order=payload.sort_order,
+        enabled=True,
+    )
+
+
+@router.delete(
+    "/{workshop_id}/modules/{name}",
+    status_code=204,
+    summary="Remove a module association from a workshop",
+)
+async def remove_workshop_module(
+    workshop_id: str = FPath(...),
+    name: str = FPath(...),
+    db: UserDB = Depends(get_userdb),
+) -> None:
+    """Remove a module association from a workshop.
+
+    The association row is deleted. The module itself and its data are unaffected.
+    """
+    await _get_or_404(workshop_id, db)
+    row = await db.fetch_one(
+        "SELECT workshop_id FROM workshop_modules WHERE workshop_id = ? AND module_name = ?",
+        [workshop_id, name],
+    )
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "Module association not found",
+                "workshop_id": workshop_id,
+                "module_name": name,
+                "suggestion": "Use GET /api/workshops/{id}/modules to see current associations",
+            },
+        )
+    await db.execute(
+        "DELETE FROM workshop_modules WHERE workshop_id = ? AND module_name = ?",
+        [workshop_id, name],
+    )
+    log.info("workshop_module_removed", workshop_id=workshop_id, module=name)
+
+
+@router.patch(
+    "/{workshop_id}/modules/{name}",
+    response_model=WorkshopModule,
+    summary="Update a workshop-module association",
+)
+async def update_workshop_module(
+    workshop_id: str = FPath(...),
+    name: str = FPath(...),
+    payload: WorkshopModuleUpdate = ...,
+    db: UserDB = Depends(get_userdb),
+) -> WorkshopModule:
+    """Update the sort_order of a module association.
+
+    Used by the workshop settings page to reorder modules in the nav.
+    """
+    await _get_or_404(workshop_id, db)
+    row = await db.fetch_one(
+        "SELECT * FROM workshop_modules WHERE workshop_id = ? AND module_name = ?",
+        [workshop_id, name],
+    )
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "Module association not found",
+                "workshop_id": workshop_id,
+                "module_name": name,
+                "suggestion": "Use GET /api/workshops/{id}/modules to see current associations",
+            },
+        )
+    updated = await db.execute_returning(
+        "UPDATE workshop_modules SET sort_order = ? WHERE workshop_id = ? AND module_name = ? RETURNING *",
+        [payload.sort_order, workshop_id, name],
+    )
+    log.info("workshop_module_updated", workshop_id=workshop_id, module=name, sort_order=payload.sort_order)
+    return WorkshopModule(
+        workshop_id=updated["workshop_id"],
+        module_name=updated["module_name"],
+        sort_order=updated["sort_order"],
+        enabled=bool(updated["enabled"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Nav — intersection of DB associations and loaded module registry
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{workshop_id}/nav",
+    response_model=WorkshopNav,
+    summary="Computed nav items for a workshop",
+)
+async def get_workshop_nav(
+    request: Request,
+    workshop_id: str = FPath(...),
+    db: UserDB = Depends(get_userdb),
+) -> WorkshopNav:
+    """Return the computed nav item list for a workshop.
+
+    Only modules present in BOTH the workshop_modules table (enabled=1) AND
+    app.state.module_registry appear in the result. A module that is associated
+    but not loaded is silently absent — its association row is never removed.
+
+    Shell fallback views (Inventory, Catalogue, Workshops) are always appended.
+    """
+    await _get_or_404(workshop_id, db)
+    rows = await db.fetch_all(
+        "SELECT * FROM workshop_modules WHERE workshop_id = ? AND enabled = 1 ORDER BY sort_order ASC, module_name ASC",
+        [workshop_id],
+    )
+    registry = request.app.state.module_registry
+    items: list[NavItem] = []
+
+    for row in rows:
+        module_name = row["module_name"]
+        if not registry.is_loaded(module_name):
+            continue  # silently absent — association row never removed
+
+        views = registry.get_module_views(module_name)
+        if views:
+            # Use declared views, ordered by their sort_order.
+            for view in sorted(views, key=lambda v: v.sort_order):
+                items.append(
+                    NavItem(
+                        id=view.id,
+                        label=view.label,
+                        route=view.route,
+                        icon=view.icon,
+                        source="module",
+                        replaces_shell_view=view.replaces_shell_view,
+                    )
+                )
+        else:
+            # Module is loaded but has no views declared — generate a default entry.
+            items.append(
+                NavItem(
+                    id=module_name,
+                    label=module_name.replace("-", " ").title(),
+                    route=f"/modules/{module_name}",
+                    icon="",
+                    source="module",
+                )
+            )
+
+    items.extend(_SHELL_NAV_ITEMS)
+    return WorkshopNav(items=items)

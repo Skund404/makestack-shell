@@ -140,6 +140,44 @@ export interface WorkshopUpdate {
   sort_order?: number
 }
 
+export interface WorkshopModule {
+  workshop_id: string
+  module_name: string
+  sort_order: number
+  enabled: boolean
+}
+
+/** A single nav entry for a workshop — either module-contributed or a shell fallback. */
+export interface NavItem {
+  id: string
+  label: string
+  route: string
+  icon: string
+  source: 'module' | 'shell'
+  /** If set, signals the frontend to demote this shell view to secondary position. */
+  replaces_shell_view: string | null
+}
+
+export interface WorkshopNav {
+  items: NavItem[]
+}
+
+// ---------------------------------------------------------------------------
+// Module types
+// ---------------------------------------------------------------------------
+
+export interface InstalledModule {
+  name: string
+  version: string
+  installed_at: string
+  enabled: boolean
+  last_migration: string | null
+  package_path: string | null
+  loaded: boolean
+  load_error: string | null
+  manifest: Record<string, unknown> | null
+}
+
 // ---------------------------------------------------------------------------
 // Package and registry types
 // ---------------------------------------------------------------------------
