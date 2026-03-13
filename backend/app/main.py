@@ -294,7 +294,7 @@ def create_app() -> FastAPI:
     their own overrides before importing.
     """
     # Import routers here to avoid circular imports at module load time.
-    from .routers import catalogue, data, dev, inventory, modules, packages, settings, system, users, version, workshops
+    from .routers import catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, users, version, workshops
 
     app = FastAPI(
         title="Makestack Shell",
@@ -347,6 +347,7 @@ def create_app() -> FastAPI:
     app.include_router(packages.router)
     app.include_router(data.router)
     app.include_router(system.router)
+    app.include_router(mcp_log.router)  # Always available — core audit infrastructure.
     app.include_router(dev.router)  # Only active in dev mode; the router self-guards.
 
     # Mount MCP SSE endpoint at /mcp — AI agents connect here.
