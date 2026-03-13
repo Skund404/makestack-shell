@@ -59,6 +59,7 @@ def _get_installer(request: Request, db: UserDB, core: CatalogueClient):
     from ..installers import (
         PackageInstaller,
         ModuleInstaller,
+        SkillInstaller,
         WidgetInstaller,
         CatalogueInstaller,
         DataInstaller,
@@ -69,6 +70,7 @@ def _get_installer(request: Request, db: UserDB, core: CatalogueClient):
         widget_installer=WidgetInstaller(db),
         catalogue_installer=CatalogueInstaller(db, core),
         data_installer=DataInstaller(db, home),
+        skill_installer=SkillInstaller(db),
     )
 
 
@@ -283,11 +285,15 @@ async def install_package(
         manifest = _load_package_manifest(package_path)
 
     # --- Dispatch to installer ---
+    module_registry = getattr(request.app.state, "module_registry", None)
+    dry_run: bool = getattr(body, "dry_run", False)
     result = await installer.install(
         package_path=package_path,
         manifest=manifest,
         git_url=git_url,
         registry_name=registry_name,
+        module_registry=module_registry,
+        dry_run=dry_run,
     )
 
     if not result.success:
@@ -296,6 +302,11 @@ async def install_package(
             detail={
                 "error": result.message,
                 "warnings": result.warnings,
+                "failed_step": result.failed_step,
+                "steps_completed": result.steps_completed,
+                "rolled_back": result.rolled_back,
+                "rollback_clean": result.rollback_clean,
+                "suggestion": result.suggestion,
             },
         )
 
@@ -304,6 +315,7 @@ async def install_package(
         name=manifest.name,
         type=manifest.type,
         version=manifest.version,
+        dry_run=dry_run,
     )
     return InstallResult(
         success=result.success,
@@ -313,6 +325,11 @@ async def install_package(
         restart_required=result.restart_required,
         message=result.message,
         warnings=result.warnings,
+        steps_completed=result.steps_completed,
+        failed_step=result.failed_step,
+        rolled_back=result.rolled_back,
+        rollback_clean=result.rollback_clean,
+        suggestion=result.suggestion,
     )
 
 
@@ -380,6 +397,11 @@ async def uninstall_package(
         restart_required=result.restart_required,
         message=result.message,
         warnings=result.warnings,
+        steps_completed=result.steps_completed,
+        failed_step=result.failed_step,
+        rolled_back=result.rolled_back,
+        rollback_clean=result.rollback_clean,
+        suggestion=result.suggestion,
     )
 
 
@@ -467,6 +489,11 @@ async def update_package(
         restart_required=result.restart_required,
         message=result.message,
         warnings=result.warnings,
+        steps_completed=result.steps_completed,
+        failed_step=result.failed_step,
+        rolled_back=result.rolled_back,
+        rollback_clean=result.rollback_clean,
+        suggestion=result.suggestion,
     )
 
 
@@ -516,6 +543,77 @@ async def search_packages(
         for p in results
     ]
     return {"items": items, "total": len(items), "query": q}
+
+
+# ---------------------------------------------------------------------------
+# Repair — recover in_progress install transactions
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/packages/repair",
+    summary="Report and roll back any in-progress install transactions",
+)
+async def repair_packages(
+    request: Request,
+    db: UserDB = Depends(get_userdb),
+) -> dict:
+    """Detect and roll back install transactions that were interrupted (e.g. crash).
+
+    This is the same recovery logic that runs automatically at startup, but
+    exposed as an API endpoint for manual invocation and for the CLI
+    'makestack repair' command.
+
+    Returns a list of transaction IDs that were found in_progress and the
+    outcome of each rollback attempt.
+    """
+    rows = await db.fetch_all(
+        "SELECT id, package_name, package_type, steps_completed, backup_path "
+        "FROM install_transactions WHERE status = 'in_progress'"
+    )
+    if not rows:
+        return {"transactions": [], "message": "No in-progress transactions found."}
+
+    import json as _json
+    from ..installers.module_installer import ModuleInstaller
+
+    results = []
+    for row in rows:
+        tx_id = row["id"]
+        pkg_name = row["package_name"]
+        try:
+            steps = _json.loads(row["steps_completed"] or "[]")
+        except Exception:
+            steps = []
+        snapshot = row.get("backup_path")
+
+        module_installer = ModuleInstaller(db)
+        rolled_back, warnings = await module_installer._rollback(
+            tx_id=tx_id,
+            steps_completed=steps,
+            package_name=pkg_name,
+            package_path=None,
+            snapshot_path=snapshot,
+            python_deps=[],
+        )
+        await db.execute(
+            "UPDATE install_transactions SET status = 'rolled_back', finished_at = datetime('now') "
+            "WHERE id = ?",
+            [tx_id],
+        )
+        results.append({
+            "transaction_id": tx_id,
+            "package_name": pkg_name,
+            "steps_completed": steps,
+            "rolled_back": rolled_back,
+            "warnings": warnings,
+        })
+        log.info("repair_rollback", tx_id=tx_id, name=pkg_name, success=rolled_back)
+
+    return {
+        "transactions": results,
+        "message": f"Rolled back {len(results)} in-progress transaction(s).",
+    }
 
 
 # ---------------------------------------------------------------------------

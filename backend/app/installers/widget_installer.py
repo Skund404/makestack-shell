@@ -31,6 +31,8 @@ class WidgetInstaller:
         manifest,  # PackageManifest
         git_url: str | None = None,
         registry_name: str | None = None,
+        module_registry=None,
+        dry_run: bool = False,
     ) -> InstallResult:
         """Register a widget pack in installed_packages."""
         existing = await self._db.fetch_one(

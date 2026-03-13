@@ -1,0 +1,15 @@
+{
+  "name": "missing-down",
+  "display_name": "Missing Down",
+  "version": "1.0.0",
+  "description": "A fixture with a migration missing a down() function",
+  "author": "test",
+  "has_backend": false,
+  "has_frontend": false,
+  "keywords": [],
+  "api_endpoints": [],
+  "panels": [],
+  "userdb_tables": [],
+  "dependencies": {"python": [], "node": []},
+  "peer_modules": {"optional": [], "required": []}
+}

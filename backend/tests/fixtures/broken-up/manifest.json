@@ -1,0 +1,15 @@
+{
+  "name": "broken-up",
+  "display_name": "Broken Up",
+  "version": "1.0.0",
+  "description": "A fixture with a migration whose up() raises an exception",
+  "author": "test",
+  "has_backend": false,
+  "has_frontend": false,
+  "keywords": [],
+  "api_endpoints": [],
+  "panels": [],
+  "userdb_tables": [],
+  "dependencies": {"python": [], "node": []},
+  "peer_modules": {"optional": [], "required": []}
+}

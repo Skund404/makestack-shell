@@ -1,0 +1,15 @@
+{
+  "name": "invalid-manifest-field",
+  "display_name": "Invalid Manifest Field",
+  "version": "1.0.0",
+  "description": "A fixture with an invalid field type",
+  "author": "test",
+  "has_backend": "yes-please",
+  "has_frontend": false,
+  "keywords": [],
+  "api_endpoints": [],
+  "panels": [],
+  "userdb_tables": [],
+  "dependencies": {"python": [], "node": []},
+  "peer_modules": {"optional": [], "required": []}
+}

@@ -32,7 +32,8 @@ log = structlog.get_logger().bind(component="data_router")
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
-SHELL_VERSION = "0.1.0"
+from ..constants import SHELL_VERSION
+
 EXPORT_FORMAT_VERSION = "1.0.0"
 
 ImportStrategy = Literal["additive", "overwrite", "skip_conflicts"]

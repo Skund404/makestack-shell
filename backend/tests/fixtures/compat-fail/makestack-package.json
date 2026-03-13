@@ -1,0 +1,6 @@
+{
+  "name": "compat-fail",
+  "type": "module",
+  "version": "1.0.0",
+  "shell_compatibility": ">=99.0.0"
+}

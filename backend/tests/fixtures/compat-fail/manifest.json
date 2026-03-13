@@ -1,0 +1,16 @@
+{
+  "name": "compat-fail",
+  "display_name": "Compat Fail",
+  "version": "1.0.0",
+  "description": "A fixture that requires a shell version that does not exist",
+  "author": "test",
+  "shell_compatibility": ">=99.0.0",
+  "has_backend": false,
+  "has_frontend": false,
+  "keywords": [],
+  "api_endpoints": [],
+  "panels": [],
+  "userdb_tables": [],
+  "dependencies": {"python": [], "node": []},
+  "peer_modules": {"optional": [], "required": []}
+}

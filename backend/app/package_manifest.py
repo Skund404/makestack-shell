@@ -8,18 +8,17 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
-_VALID_TYPES = frozenset({"module", "widget-pack", "catalogue", "data"})
+_VALID_TYPES = frozenset({"module", "widget-pack", "catalogue", "data", "skill"})
 
 
 class PackageManifest(BaseModel):
     """Parsed makestack-package.json at the root of any installable package.
 
-    All four installable types (module, widget-pack, catalogue, data) share
-    this manifest. Type-specific fields (e.g. module's keyword declarations)
-    live in the separate manifest.json, not here.
+    All installable types share this manifest. Type-specific fields live in the
+    separate manifest.json, not here.
     """
 
     name: str
@@ -58,3 +57,28 @@ class PackageManifest(BaseModel):
                 f"Version '{v}' is not a valid semver string (e.g. 1.0.0)."
             )
         return v
+
+    @model_validator(mode="after")
+    def check_shell_compatibility(self) -> "PackageManifest":
+        """Reject the manifest if shell_compatibility is set and not satisfied."""
+        if not self.shell_compatibility:
+            return self
+        from packaging.specifiers import InvalidSpecifier, SpecifierSet
+        from packaging.version import Version
+
+        from .constants import SHELL_VERSION
+
+        try:
+            spec = SpecifierSet(self.shell_compatibility)
+        except InvalidSpecifier as exc:
+            raise ValueError(
+                f"shell_compatibility '{self.shell_compatibility}' is not a valid version specifier: {exc}"
+            ) from exc
+
+        if Version(SHELL_VERSION) not in spec:
+            raise ValueError(
+                f"shell_compatibility '{self.shell_compatibility}' requires a shell version "
+                f"that is not satisfied by the current version {SHELL_VERSION!r}. "
+                f"Update the Shell or contact the package author."
+            )
+        return self

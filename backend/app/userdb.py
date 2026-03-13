@@ -6,8 +6,10 @@ The database lives at ~/.makestack/userdb.sqlite (configurable).
 
 import importlib.util
 import os
+import shutil
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -200,3 +202,75 @@ class UserDB:
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         )
         return [r["name"] for r in rows]
+
+    # ------------------------------------------------------------------
+    # Backup and restore
+    # ------------------------------------------------------------------
+
+    async def backup(self, dest_path: str) -> None:
+        """Backup the database to dest_path using aiosqlite's native backup API.
+
+        Creates the destination directory if it does not exist. The backup is
+        a fully valid SQLite file usable independently of the running shell.
+        """
+        conn = self._require_connection()
+        dest = Path(dest_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        async with aiosqlite.connect(str(dest)) as dest_conn:
+            await conn.backup(dest_conn)
+        log.info("userdb_backed_up", dest=dest_path)
+
+    async def restore(self, src_path: str) -> None:
+        """Restore the database from src_path.
+
+        Closes the current connection, copies src_path over the live database
+        file, then reopens the connection. The restored database is immediately
+        active for subsequent queries.
+        """
+        if self._path == ":memory:":
+            raise RuntimeError("Cannot restore an in-memory database from a file backup.")
+        src = Path(src_path)
+        if not src.exists():
+            raise FileNotFoundError(f"Backup file not found: {src_path}")
+        await self.close()
+        shutil.copy2(str(src), self._path)
+        await self.open()
+        log.info("userdb_restored", src=src_path, dest=self._path)
+
+    @staticmethod
+    def prune_backups(
+        backups_dir: str | Path,
+        keep_daily: int = 7,
+        keep_pre_install_days: int = 30,
+    ) -> list[str]:
+        """Remove old backups, returning a list of deleted file paths.
+
+        Retention rules:
+        - Manual/daily backups (``userdb-backup-*.sqlite``): keep the most
+          recent ``keep_daily`` files, delete the rest.
+        - Pre-install snapshots (``userdb-preinstall-*.sqlite``): keep any
+          file whose mtime is within the last ``keep_pre_install_days`` days.
+        """
+        backups_dir = Path(backups_dir)
+        if not backups_dir.exists():
+            return []
+
+        deleted: list[str] = []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=keep_pre_install_days)
+
+        # Daily/manual backups — keep most recent N by filename sort (timestamps in name).
+        daily = sorted(backups_dir.glob("userdb-backup-*.sqlite"), reverse=True)
+        for f in daily[keep_daily:]:
+            f.unlink()
+            deleted.append(str(f))
+            log.info("backup_pruned", path=str(f), reason="daily_retention")
+
+        # Pre-install snapshots — keep anything newer than cutoff.
+        for f in backups_dir.glob("userdb-preinstall-*.sqlite"):
+            mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+            if mtime < cutoff:
+                f.unlink()
+                deleted.append(str(f))
+                log.info("backup_pruned", path=str(f), reason="preinstall_retention")
+
+        return deleted

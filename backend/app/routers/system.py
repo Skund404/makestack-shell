@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ..constants import SHELL_VERSION as _SHELL_VERSION
 from ..core_client import CatalogueClient
 from ..dependencies import get_core_client, get_userdb
 from ..models import Capability, CapabilitiesResponse, CapabilityParam, SystemStatus
@@ -26,8 +27,6 @@ from ..userdb import UserDB
 log = structlog.get_logger().bind(component="system_router")
 
 router = APIRouter(prefix="/api", tags=["system"])
-
-_SHELL_VERSION = "0.1.0"
 
 
 @router.get("/status", response_model=SystemStatus, summary="Shell runtime status")

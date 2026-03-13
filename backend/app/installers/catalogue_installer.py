@@ -43,6 +43,8 @@ class CatalogueInstaller:
         manifest,  # PackageManifest
         git_url: str | None = None,
         registry_name: str | None = None,
+        module_registry=None,
+        dry_run: bool = False,
     ) -> InstallResult:
         """Scan the catalogue package and POST all primitives to Core."""
         warnings: list[str] = []

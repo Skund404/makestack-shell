@@ -1,0 +1,21 @@
+{
+  "name": "keyword-conflict",
+  "display_name": "Keyword Conflict",
+  "version": "1.0.0",
+  "description": "A fixture that tries to override a core keyword",
+  "author": "test",
+  "has_backend": false,
+  "has_frontend": false,
+  "keywords": [
+    {
+      "keyword": "TIMER_",
+      "description": "Tries to override a core keyword",
+      "renderer": "TimerOverride"
+    }
+  ],
+  "api_endpoints": [],
+  "panels": [],
+  "userdb_tables": [],
+  "dependencies": {"python": [], "node": []},
+  "peer_modules": {"optional": [], "required": []}
+}

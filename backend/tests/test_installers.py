@@ -52,6 +52,8 @@ def _make_module_dir(tmp_path: Path, name: str = "test-pkg") -> Path:
             "name": name,
             "display_name": name.title(),
             "version": "1.0.0",
+            "description": "Test module",
+            "author": "test",
             "has_backend": False,
             "has_frontend": False,
             "keywords": [],
@@ -100,7 +102,13 @@ async def test_module_installer_update_existing(db: UserDB, tmp_path: Path):
     await installer.install(str(pkg_dir), _manifest("test-pkg", version="1.0.0"))
 
     # Update the manifest.json to simulate a new version
-    new_manifest_json = json.dumps({"name": "test-pkg", "version": "2.0.0"})
+    new_manifest_json = json.dumps({
+        "name": "test-pkg", "display_name": "Test Pkg", "version": "2.0.0",
+        "description": "Test module", "author": "test",
+        "has_backend": False, "has_frontend": False,
+        "keywords": [], "api_endpoints": [], "panels": [], "userdb_tables": [],
+        "dependencies": {"python": [], "node": []},
+    })
     (pkg_dir / "manifest.json").write_text(new_manifest_json)
 
     # Second install (update)
@@ -351,12 +359,14 @@ async def test_data_installer_uninstall(db: UserDB, tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_dispatcher_routes_to_module_installer(db: UserDB, tmp_path: Path, mock_core):
+    from backend.app.installers.skill_installer import SkillInstaller
     pkg_dir = _make_module_dir(tmp_path)
     dispatcher = PackageInstaller(
         module_installer=ModuleInstaller(db),
         widget_installer=WidgetInstaller(db),
         catalogue_installer=CatalogueInstaller(db, mock_core),
         data_installer=DataInstaller(db, tmp_path),
+        skill_installer=SkillInstaller(db),
     )
     manifest = _manifest("test-pkg", "module")
     result = await dispatcher.install(str(pkg_dir), manifest)
@@ -366,11 +376,13 @@ async def test_dispatcher_routes_to_module_installer(db: UserDB, tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_dispatcher_routes_to_widget_installer(db: UserDB, tmp_path: Path, mock_core):
+    from backend.app.installers.skill_installer import SkillInstaller
     dispatcher = PackageInstaller(
         module_installer=ModuleInstaller(db),
         widget_installer=WidgetInstaller(db),
         catalogue_installer=CatalogueInstaller(db, mock_core),
         data_installer=DataInstaller(db, tmp_path),
+        skill_installer=SkillInstaller(db),
     )
     manifest = _manifest("my-widgets", "widget-pack")
     result = await dispatcher.install("/tmp/fake", manifest)
@@ -380,11 +392,13 @@ async def test_dispatcher_routes_to_widget_installer(db: UserDB, tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_dispatcher_unknown_type_returns_failure(db: UserDB, tmp_path: Path, mock_core):
+    from backend.app.installers.skill_installer import SkillInstaller
     dispatcher = PackageInstaller(
         module_installer=ModuleInstaller(db),
         widget_installer=WidgetInstaller(db),
         catalogue_installer=CatalogueInstaller(db, mock_core),
         data_installer=DataInstaller(db, tmp_path),
+        skill_installer=SkillInstaller(db),
     )
     # Build a manifest-like object with an injected invalid type (bypass validation).
     from backend.app.package_manifest import PackageManifest

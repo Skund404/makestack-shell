@@ -383,6 +383,7 @@ class PackageInstallRequest(BaseModel):
     name: str | None = None        # Package name (resolved via registry)
     source: str | None = None      # Direct Git URL or local path
     version: str | None = None     # Pin to specific version (None = latest)
+    dry_run: bool = False          # Validate only (steps 1–4), no writes
 
 
 class InstalledPackage(BaseModel):
@@ -415,8 +416,14 @@ class RegistryAddRequest(BaseModel):
 
 
 class InstallResult(BaseModel):
-    """Outcome of an install or uninstall operation."""
+    """Outcome of an install or uninstall operation.
 
+    Phase 10 adds structured fields for step tracking, rollback reporting, and
+    actionable suggestions. All new fields have defaults — existing callers are
+    unaffected.
+    """
+
+    # --- Base fields (Phase 6) ---
     success: bool
     package_name: str
     package_type: str
@@ -424,6 +431,13 @@ class InstallResult(BaseModel):
     restart_required: bool = False
     message: str = ""
     warnings: list[str] = Field(default_factory=list)
+
+    # --- Phase 10 fields ---
+    steps_completed: list[str] = Field(default_factory=list)
+    failed_step: str | None = None
+    rolled_back: bool = False
+    rollback_clean: bool = True
+    suggestion: str | None = None
 
 
 # ---------------------------------------------------------------------------

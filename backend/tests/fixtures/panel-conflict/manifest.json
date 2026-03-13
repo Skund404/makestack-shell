@@ -1,0 +1,20 @@
+{
+  "name": "panel-conflict",
+  "display_name": "Panel Conflict",
+  "version": "1.0.0",
+  "description": "A fixture that declares a panel ID already in use",
+  "author": "test",
+  "has_backend": false,
+  "has_frontend": false,
+  "keywords": [],
+  "api_endpoints": [],
+  "panels": [
+    {
+      "id": "already-claimed-panel",
+      "label": "Conflicting Panel"
+    }
+  ],
+  "userdb_tables": [],
+  "dependencies": {"python": [], "node": []},
+  "peer_modules": {"optional": [], "required": []}
+}

@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from .constants import SHELL_VERSION
 from .core_client import CatalogueClient, CoreUnavailableError
 from .module_loader import load_modules
 from .package_cache import PackageCache
@@ -34,8 +35,6 @@ from .userdb import UserDB
 # ---------------------------------------------------------------------------
 # Configuration (resolved from environment at startup)
 # ---------------------------------------------------------------------------
-
-SHELL_VERSION = "0.1.0"
 
 
 def _load_config() -> dict:
@@ -151,6 +150,35 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 
 
+async def _daily_backup_loop(app: FastAPI) -> None:
+    """Run a daily UserDB backup, then prune old backups.
+
+    Sleeps 24 hours between runs. The first backup fires after the initial
+    sleep so it doesn't race with the startup sequence. Uses
+    asyncio.create_task in the lifespan — never a thread.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    log = structlog.get_logger().bind(component="daily_backup")
+    while True:
+        await asyncio.sleep(86400)  # 24 hours
+        db: UserDB = app.state.userdb
+        if db.path == ":memory:":
+            continue  # No-op for in-memory DBs (e.g. tests)
+
+        backups_dir = Path(db.path).parent / "backups"
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        dest = backups_dir / f"userdb-backup-{ts}.sqlite"
+
+        try:
+            await db.backup(str(dest))
+            deleted = UserDB.prune_backups(backups_dir)
+            log.info("daily_backup_complete", path=str(dest), pruned=len(deleted))
+        except Exception as exc:
+            log.error("daily_backup_failed", error=str(exc))
+
+
 async def _core_health_poll(app: FastAPI, interval_seconds: int = 30) -> None:
     """Periodically probe Core and update app.state.core_connected."""
     from datetime import datetime, timezone
@@ -250,6 +278,7 @@ async def lifespan(app: FastAPI):
 
     # --- Background tasks -------------------------------------------------
     health_task = asyncio.create_task(_core_health_poll(app))
+    backup_task = asyncio.create_task(_daily_backup_loop(app))
 
     # --- Startup summary --------------------------------------------------
     userdb_display = Path(config["userdb_path"]).expanduser()
@@ -279,8 +308,13 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown ---------------------------------------------------------
     health_task.cancel()
+    backup_task.cancel()
     try:
         await health_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await backup_task
     except asyncio.CancelledError:
         pass
     await core_client.close()
@@ -300,7 +334,7 @@ def create_app() -> FastAPI:
     their own overrides before importing.
     """
     # Import routers here to avoid circular imports at module load time.
-    from .routers import catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, terminal, users, version, workshops
+    from .routers import backups, catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, terminal, users, version, workshops
 
     app = FastAPI(
         title="Makestack Shell",
@@ -353,6 +387,7 @@ def create_app() -> FastAPI:
     app.include_router(packages.router)
     app.include_router(data.router)
     app.include_router(system.router)
+    app.include_router(backups.router)    # Always available — backup infrastructure (Phase 10).
     app.include_router(mcp_log.router)    # Always available — core audit infrastructure.
     app.include_router(terminal.router)   # Always available — terminal + log stream (Phase 9).
     app.include_router(dev.router)  # Only active in dev mode; the router self-guards.

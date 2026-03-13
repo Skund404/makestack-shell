@@ -47,6 +47,8 @@ class DataInstaller:
         manifest,  # PackageManifest — but we also need the raw dict for 'targets'
         git_url: str | None = None,
         registry_name: str | None = None,
+        module_registry=None,
+        dry_run: bool = False,
     ) -> InstallResult:
         """Copy data files to their target locations."""
         warnings: list[str] = []

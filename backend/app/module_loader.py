@@ -385,6 +385,67 @@ async def _load_module(
 
 
 # ---------------------------------------------------------------------------
+# Startup recovery — roll back interrupted install transactions
+# ---------------------------------------------------------------------------
+
+
+async def _recover_incomplete_installs(db: UserDB) -> None:
+    """Roll back any install transactions that were left in_progress.
+
+    Called at startup BEFORE any modules are loaded, so that a crashed install
+    does not leave the system in a half-installed state.
+    """
+    import json as _json
+
+    rows = await db.fetch_all(
+        "SELECT id, package_name, steps_completed, backup_path "
+        "FROM install_transactions WHERE status = 'in_progress'"
+    )
+    if not rows:
+        return
+
+    log.warning(
+        "startup_recovery_found_incomplete_installs",
+        count=len(rows),
+    )
+
+    from .installers.module_installer import ModuleInstaller
+
+    module_installer = ModuleInstaller(db)
+
+    for row in rows:
+        tx_id = row["id"]
+        pkg_name = row["package_name"]
+        try:
+            steps = _json.loads(row["steps_completed"] or "[]")
+        except Exception:
+            steps = []
+        snapshot = row.get("backup_path")
+
+        log.info("startup_recovery_rolling_back", tx_id=tx_id, package=pkg_name)
+        rolled_back, warnings = await module_installer._rollback(
+            tx_id=tx_id,
+            steps_completed=steps,
+            package_name=pkg_name,
+            package_path=None,
+            snapshot_path=snapshot,
+            python_deps=[],
+        )
+        await db.execute(
+            "UPDATE install_transactions SET status = 'rolled_back', "
+            "finished_at = datetime('now') WHERE id = ?",
+            [tx_id],
+        )
+        log.info(
+            "startup_recovery_complete",
+            tx_id=tx_id,
+            package=pkg_name,
+            rolled_back=rolled_back,
+            warnings=warnings,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -398,6 +459,9 @@ async def load_modules(app: FastAPI, db: UserDB) -> ModuleRegistry:
     Failures are logged and collected; the Shell always starts even if every
     module fails to load.
     """
+    # Recover any install transactions interrupted by a crash before loading modules.
+    await _recover_incomplete_installs(db)
+
     registry = ModuleRegistry()
 
     rows = await db.fetch_all(

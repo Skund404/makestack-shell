@@ -458,6 +458,12 @@ async def up(conn) -> None:
         """
     )
     await conn.commit()
+
+
+async def down(conn) -> None:
+    """Drop <<snake>> module tables."""
+    await conn.execute("DROP TABLE IF EXISTS <<snake>>_items")
+    await conn.commit()
 '''
 
 _WIDGET_TMPL = """\
@@ -565,7 +571,9 @@ def _api(method: str, path: str, **kwargs) -> dict:
 @app.command("install")
 @click.argument("target")
 @click.option("--version", "-v", default=None, help="Pin to a specific version (e.g. 1.2.0)")
-def install(target: str, version: str | None) -> None:
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Validate only (steps 1–4), no writes to disk or database")
+def install(target: str, version: str | None, dry_run: bool) -> None:
     """Install a package from a registry name, Git URL, or local path.
 
     TARGET can be:
@@ -582,22 +590,41 @@ def install(target: str, version: str | None) -> None:
         payload["name"] = target
     if version:
         payload["version"] = version
+    if dry_run:
+        payload["dry_run"] = True
 
-    click.echo(f"Installing '{target}'…")
+    label = "Dry-run validation" if dry_run else "Installing"
+    click.echo(f"{label} '{target}'…")
     result = _api("POST", "/api/packages/install", json=payload)
 
     if "error" in result:
-        click.echo(f"Error: {result['error']}", err=True)
-        if "warnings" in result:
+        click.echo(f"\nFailed: {result['error']}", err=True)
+        # Show completed steps
+        for step in result.get("steps_completed", []):
+            click.echo(f"  \u2713 {step}")
+        failed = result.get("failed_step")
+        if failed:
+            click.echo(f"  \u2717 {failed}", err=True)
+        if result.get("rolled_back"):
+            status = "clean" if result.get("rollback_clean", True) else "incomplete (pip orphan possible)"
+            click.echo(f"\nRolled back: {status}")
+        if result.get("suggestion"):
+            click.echo(f"\nSuggestion: {result['suggestion']}")
+        if result.get("warnings"):
             for w in result["warnings"]:
                 click.echo(f"  ! {w}", err=True)
         raise SystemExit(1)
 
-    click.echo(f"OK  {result.get('package_name')} v{result.get('version')} ({result.get('package_type')})")
-    click.echo(f"    {result.get('message', '')}")
+    # Success — show step-by-step output
+    for step in result.get("steps_completed", []):
+        click.echo(f"  \u2713 {step}")
+
+    click.echo(f"\nOK  {result.get('package_name')} v{result.get('version')} ({result.get('package_type')})")
+    if result.get("message"):
+        click.echo(f"    {result['message']}")
 
     if result.get("warnings"):
-        click.echo("Warnings:")
+        click.echo("\nWarnings:")
         for w in result["warnings"]:
             click.echo(f"  ! {w}")
 
@@ -766,6 +793,39 @@ def registry_refresh() -> None:
 
 
 # ---------------------------------------------------------------------------
+# makestack repair
+# ---------------------------------------------------------------------------
+
+
+@app.command("repair")
+def repair() -> None:
+    """Roll back any interrupted install transactions (Shell must be running).
+
+    If the Shell crashed during a module install, this command detects the
+    incomplete transaction and rolls it back, restoring the database from
+    the pre-install snapshot if available.
+    """
+    click.echo("Checking for interrupted install transactions…")
+    result = _api("GET", "/api/packages/repair")
+
+    transactions = result.get("transactions", [])
+    if not transactions:
+        click.echo("No interrupted transactions found. System is clean.")
+        return
+
+    for tx in transactions:
+        name = tx.get("package_name", "?")
+        rolled_back = tx.get("rolled_back", False)
+        warnings = tx.get("warnings", [])
+        status = "\u2713 rolled back" if rolled_back else "\u2717 rollback incomplete"
+        click.echo(f"  {status}  {name}")
+        for w in warnings:
+            click.echo(f"    ! {w}")
+
+    click.echo(f"\n{result.get('message', '')}")
+
+
+# ---------------------------------------------------------------------------
 # Data export/import commands
 # ---------------------------------------------------------------------------
 
@@ -773,6 +833,56 @@ from cli.commands.data import export_cmd, import_cmd  # noqa: E402
 
 app.add_command(export_cmd, name="export")
 app.add_command(import_cmd, name="import")
+
+
+# ---------------------------------------------------------------------------
+# Backup / restore commands
+# ---------------------------------------------------------------------------
+
+
+@app.command("backup")
+def cmd_backup() -> None:
+    """Create a manual UserDB backup (Shell must be running).
+
+    The backup is stored in ~/.makestack/backups/ with a timestamp in the
+    filename. Use 'makestack restore' to recover from a backup.
+    """
+    result = _api("POST", "/api/backups")
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Backup created: {result.get('path')}")
+    size_kb = result.get("size_bytes", 0) // 1024
+    click.echo(f"  Size: {size_kb} KB  |  Kind: {result.get('kind')}  |  At: {result.get('created_at')}")
+
+
+@app.command("restore")
+@click.argument("backup_path")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt")
+def cmd_restore(backup_path: str, yes: bool) -> None:
+    """Restore the UserDB from a backup file (Shell must be running).
+
+    BACKUP_PATH is the full path to the backup file. Use 'makestack backup'
+    to list available backups (GET /api/backups).
+
+    WARNING: this overwrites the live database immediately.
+    """
+    if not yes:
+        click.confirm(
+            f"Restore from '{backup_path}'?\n"
+            "This will overwrite the current database with the backup's data.",
+            abort=True,
+        )
+
+    result = _api("POST", "/api/backups/restore", json={"backup_path": backup_path})
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        raise SystemExit(1)
+
+    click.echo(result.get("message", "Database restored successfully."))
 
 
 if __name__ == "__main__":
