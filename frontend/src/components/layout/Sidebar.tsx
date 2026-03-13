@@ -15,6 +15,7 @@ import {
   LayoutGrid,
   Package,
   Puzzle,
+  ScrollText,
   Search,
   ShieldCheck,
   Star,
@@ -262,6 +263,49 @@ function ModuleViewsSection({ items }: { items: ContextNavItem[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Shell Tools section — always visible, opens bottom panel or /dev/docs
+// ---------------------------------------------------------------------------
+
+function ShellToolsSection({ dimmed }: { dimmed?: boolean }) {
+  const openPanel = (tab: 'terminal' | 'log') => {
+    window.dispatchEvent(new CustomEvent('open-panel', { detail: { tab } }))
+  }
+
+  return (
+    <div>
+      <SectionLabel dimmed={dimmed}>Shell Tools</SectionLabel>
+      <div className="space-y-0.5">
+        <button
+          onClick={() => openPanel('terminal')}
+          className={cn(
+            'flex items-center gap-2.5 px-3 py-1.5 rounded text-xs transition-colors w-full text-left',
+            dimmed
+              ? 'text-text-faint hover:bg-surface-el hover:text-text-muted'
+              : 'text-text-muted hover:bg-surface-el hover:text-text',
+          )}
+        >
+          <Terminal size={14} />
+          <span>Terminal</span>
+        </button>
+        <button
+          onClick={() => openPanel('log')}
+          className={cn(
+            'flex items-center gap-2.5 px-3 py-1.5 rounded text-xs transition-colors w-full text-left',
+            dimmed
+              ? 'text-text-faint hover:bg-surface-el hover:text-text-muted'
+              : 'text-text-muted hover:bg-surface-el hover:text-text',
+          )}
+        >
+          <ScrollText size={14} />
+          <span>System Log</span>
+        </button>
+        <NavLink item={{ to: '/dev/docs', label: 'Docs', icon: <BookOpen size={14} /> }} />
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Dev section — conditional on dev mode flag from /api/status
 // ---------------------------------------------------------------------------
 
@@ -347,6 +391,9 @@ function ShellLayer({
 
       {/* System */}
       <NavSection label="System" items={SYSTEM_ITEMS} dimmed={dimmed} />
+
+      {/* Shell Tools — Terminal, Log, Docs */}
+      <ShellToolsSection dimmed={dimmed} />
 
       {/* Dev tools */}
       <DevSection dimmed={dimmed} />

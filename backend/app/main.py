@@ -60,11 +60,17 @@ def _configure_logging(dev_mode: bool) -> None:
 
     In production, logs are also written to ~/.makestack/logs/shell.log
     with 10MB rotation (5 files kept). All output also goes to stdout for Docker.
+
+    BroadcastLogProcessor is inserted before the final renderer so every
+    structlog event is fanned out to SSE subscribers (Phase 9).
     """
+    from .log_broadcast import BroadcastLogProcessor
+
     processors: list = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        BroadcastLogProcessor(),  # Fan-out to SSE subscribers before rendering.
     ]
     if dev_mode:
         processors.append(structlog.dev.ConsoleRenderer())
@@ -294,7 +300,7 @@ def create_app() -> FastAPI:
     their own overrides before importing.
     """
     # Import routers here to avoid circular imports at module load time.
-    from .routers import catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, users, version, workshops
+    from .routers import catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, terminal, users, version, workshops
 
     app = FastAPI(
         title="Makestack Shell",
@@ -347,7 +353,8 @@ def create_app() -> FastAPI:
     app.include_router(packages.router)
     app.include_router(data.router)
     app.include_router(system.router)
-    app.include_router(mcp_log.router)  # Always available — core audit infrastructure.
+    app.include_router(mcp_log.router)    # Always available — core audit infrastructure.
+    app.include_router(terminal.router)   # Always available — terminal + log stream (Phase 9).
     app.include_router(dev.router)  # Only active in dev mode; the router self-guards.
 
     # Mount MCP SSE endpoint at /mcp — AI agents connect here.

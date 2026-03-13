@@ -20,6 +20,7 @@ import { SettingsIndex } from '@/routes/settings/index'
 import { DevKeywords } from '@/routes/dev/keywords'
 import { DevSchema } from '@/routes/dev/schema'
 import { DevModules } from '@/routes/dev/modules'
+import { DevDocs } from '@/routes/dev/docs'
 import { PackagesIndex } from '@/routes/packages/index'
 
 // ---------------------------------------------------------------------------
@@ -213,6 +214,13 @@ const devModulesRoute = createRoute({
   component: DevModules,
 })
 
+const devDocsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/dev/docs',
+  validateSearch: () => ({} as Record<never, never>),
+  component: DevDocs,
+})
+
 // ---------------------------------------------------------------------------
 // Route tree + router
 // ---------------------------------------------------------------------------
@@ -235,6 +243,7 @@ const routeTree = rootRoute.addChildren([
   devKeywordsRoute,
   devSchemaRoute,
   devModulesRoute,
+  devDocsRoute,
 ])
 
 export const router = createRouter({ routeTree })
