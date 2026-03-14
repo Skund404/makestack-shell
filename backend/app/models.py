@@ -30,6 +30,23 @@ class PaginatedList(BaseModel, Generic[T]):
 # ---------------------------------------------------------------------------
 
 
+class Step(BaseModel):
+    """A typed step in a technique or workflow's steps array.
+
+    Steps are additive — old list[Any] steps (plain strings or unstructured
+    objects without 'order') remain valid; this model is only used when
+    the caller explicitly constructs a typed Step.
+    """
+
+    order: int
+    title: str
+    notes: str | None = None
+    technique_ref: str | None = None          # catalogue path ending /manifest.json
+    duration: dict[str, Any] | None = None    # {value: number, unit: string}
+    parameters: dict[str, Any] | None = None  # {key: {value: number, unit: string}}
+    requirements: list[dict[str, Any]] | None = None  # [{type, target, ...}]
+
+
 class Primitive(BaseModel):
     """A single primitive as returned by Core (or proxied by the Shell)."""
 
@@ -44,6 +61,12 @@ class Primitive(BaseModel):
     tags: list[Any] = Field(default_factory=list)
     properties: dict[str, Any] | None = None
     parent_project: str = ""
+    # Primitives Evolution fields (Core-1, additive — absent from old Core responses).
+    domain: str | None = None
+    unit: str | None = None
+    subtype: str | None = None
+    occurred_at: str | None = None
+    status: str | None = None
     manifest: dict[str, Any] = Field(default_factory=dict)
     commit_hash: str = ""
 
@@ -59,6 +82,12 @@ class PrimitiveCreate(BaseModel):
     steps: list[Any] | None = None          # technique, workflow
     parent_project: str | None = None       # project
     relationships: list[dict[str, Any]] = Field(default_factory=list)
+    # Primitives Evolution fields (Core-1, additive).
+    domain: str | None = None
+    unit: str | None = None
+    subtype: str | None = None
+    occurred_at: str | None = None
+    status: str | None = None
 
 
 class PrimitiveUpdate(BaseModel):
@@ -74,6 +103,12 @@ class PrimitiveUpdate(BaseModel):
     steps: list[Any] | None = None
     parent_project: str | None = None
     relationships: list[dict[str, Any]] = Field(default_factory=list)
+    # Primitives Evolution fields (Core-1, additive).
+    domain: str | None = None
+    unit: str | None = None
+    subtype: str | None = None
+    occurred_at: str | None = None
+    status: str | None = None
 
 
 # ---------------------------------------------------------------------------

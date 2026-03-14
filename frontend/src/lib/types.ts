@@ -2,6 +2,47 @@
  * TypeScript types matching the Shell REST API response shapes (Pydantic models).
  */
 
+// ---------------------------------------------------------------------------
+// Typed Step sub-types (Primitives Evolution — Core-2)
+// ---------------------------------------------------------------------------
+
+/** A {value, unit} measurement object used in step duration and parameters. */
+export interface StepDuration {
+  value: number
+  unit: string
+}
+
+/** A single parameter entry: key maps to a measurement object. */
+export type StepParameter = Record<string, StepDuration>
+
+/** A material or tool requirement declared within a step. */
+export interface StepRequirement {
+  type: string
+  target: string
+  quantity?: number
+  unit?: string
+  notes?: string
+}
+
+/**
+ * A typed step in a technique or workflow's steps array.
+ * Old-style plain-string or unstructured-object steps remain valid;
+ * this interface describes steps that carry an 'order' field.
+ */
+export interface Step {
+  order: number
+  title: string
+  notes?: string
+  technique_ref?: string
+  duration?: StepDuration
+  parameters?: StepParameter
+  requirements?: StepRequirement[]
+}
+
+// ---------------------------------------------------------------------------
+// Primitive
+// ---------------------------------------------------------------------------
+
 export interface Primitive {
   id: string
   type: string
@@ -14,6 +55,16 @@ export interface Primitive {
   tags: string[]
   properties: Record<string, unknown> | null
   parent_project: string
+  /** Domain pack affiliation (Primitives Evolution — Core-1). */
+  domain?: string | null
+  /** Unit of measure for material primitives (Core-1). */
+  unit?: string | null
+  /** Material subtype: consumable | component | product | organism (Core-1). */
+  subtype?: string | null
+  /** ISO8601 timestamp for event primitives (Core-1). */
+  occurred_at?: string | null
+  /** Lifecycle status for project primitives (Core-1). */
+  status?: string | null
   manifest: Record<string, unknown>
   commit_hash: string
 }
@@ -72,6 +123,11 @@ export interface PrimitiveCreate {
   steps?: unknown[]
   parent_project?: string
   relationships?: Array<{ type: string; target: string }>
+  domain?: string
+  unit?: string
+  subtype?: string
+  occurred_at?: string
+  status?: string
 }
 
 export interface PrimitiveUpdate {
@@ -85,6 +141,11 @@ export interface PrimitiveUpdate {
   steps?: unknown[]
   parent_project?: string
   relationships?: Array<{ type: string; target: string }>
+  domain?: string
+  unit?: string
+  subtype?: string
+  occurred_at?: string
+  status?: string
 }
 
 export interface InventoryItem {

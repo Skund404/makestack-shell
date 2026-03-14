@@ -14,7 +14,7 @@ from backend.app.core_client import (
     CoreUnavailableError,
     CoreValidationError,
 )
-from backend.app.models import PrimitiveCreate, PrimitiveUpdate
+from backend.app.models import Primitive, PrimitiveCreate, PrimitiveUpdate, Step
 
 
 # ---------------------------------------------------------------------------
@@ -311,3 +311,126 @@ async def test_connect_error_raises_unavailable():
     client = CatalogueClient(client=inner)
     with pytest.raises(CoreUnavailableError):
         await client.list_primitives()
+
+
+# ---------------------------------------------------------------------------
+# Core-3: Primitive Evolution fields round-trip through proxy
+# ---------------------------------------------------------------------------
+
+
+_PRIMITIVE_WITH_NEW_FIELDS = {
+    "id": "mat-leather-001",
+    "type": "material",
+    "name": "Veg Tan Leather",
+    "slug": "veg-tan-leather",
+    "path": "materials/veg-tan-leather/manifest.json",
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-01-01T00:00:00Z",
+    "description": "Full-grain veg tan hide",
+    "tags": ["leather"],
+    "properties": None,
+    "parent_project": "",
+    "manifest": {"id": "mat-leather-001"},
+    "commit_hash": "",
+    # Core-1 fields:
+    "domain": "leathercraft",
+    "unit": "sq ft",
+    "subtype": "consumable",
+    "occurred_at": None,
+    "status": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_primitive_new_fields_round_trip():
+    """Primitive with Core-1 fields is parsed and exposed correctly by the client."""
+    client = _make_client({
+        ("GET", "/api/primitives"): _make_response(200, [_PRIMITIVE_WITH_NEW_FIELDS])
+    })
+    results = await client.list_primitives()
+    assert len(results) == 1
+    p = results[0]
+    assert p.domain == "leathercraft"
+    assert p.unit == "sq ft"
+    assert p.subtype == "consumable"
+    assert p.occurred_at is None
+    assert p.status is None
+
+
+@pytest.mark.asyncio
+async def test_primitive_new_fields_absent_defaults_to_none():
+    """Primitives from older Core responses (no new fields) parse with None defaults."""
+    client = _make_client({
+        ("GET", "/api/primitives"): _make_response(200, [_PRIMITIVE_PAYLOAD])
+    })
+    results = await client.list_primitives()
+    p = results[0]
+    assert p.domain is None
+    assert p.unit is None
+    assert p.subtype is None
+    assert p.occurred_at is None
+    assert p.status is None
+
+
+def test_primitive_model_new_fields_optional():
+    """Primitive model accepts new fields as keyword arguments and stores them."""
+    p = Primitive(
+        id="x",
+        type="project",
+        name="Test Project",
+        slug="test-project",
+        path="projects/test-project/manifest.json",
+        manifest={},
+        status="active",
+        domain="leathercraft",
+    )
+    assert p.status == "active"
+    assert p.domain == "leathercraft"
+    assert p.unit is None
+
+
+# ---------------------------------------------------------------------------
+# Core-3: Step model validation
+# ---------------------------------------------------------------------------
+
+
+def test_step_model_minimal_valid():
+    """Step with just order and title is valid."""
+    s = Step(order=1, title="Cut the hide")
+    assert s.order == 1
+    assert s.title == "Cut the hide"
+    assert s.notes is None
+    assert s.duration is None
+    assert s.requirements is None
+
+
+def test_step_model_all_fields():
+    """Step accepts all optional fields."""
+    s = Step(
+        order=2,
+        title="Punch holes",
+        notes="Use a 4-prong chisel",
+        technique_ref="techniques/saddle-stitching/manifest.json",
+        duration={"value": 15, "unit": "min"},
+        parameters={"spacing": {"value": 4, "unit": "mm"}},
+        requirements=[{"type": "uses_tool", "target": "tools/chisel/manifest.json"}],
+    )
+    assert s.order == 2
+    assert s.technique_ref == "techniques/saddle-stitching/manifest.json"
+    assert s.duration == {"value": 15, "unit": "min"}
+    assert s.parameters == {"spacing": {"value": 4, "unit": "mm"}}
+    assert len(s.requirements) == 1
+
+
+def test_step_model_order_required():
+    """Step without order raises ValidationError."""
+    import pydantic
+    with pytest.raises(pydantic.ValidationError):
+        Step(title="No order")
+
+
+def test_step_model_title_required():
+    """Step without title raises ValidationError."""
+    import pydantic
+    with pytest.raises(pydantic.ValidationError):
+        Step(order=1)
