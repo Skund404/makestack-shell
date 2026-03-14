@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Module frontend bundles — resolved at build time when modules are installed.
+      // Each key maps to the module's frontend/ directory via its package_path.
+      '@kitchen-frontend': path.resolve(__dirname, '../../makestack-addons/modules/kitchen/frontend'),
     },
   },
   server: {

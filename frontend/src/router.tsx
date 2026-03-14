@@ -22,6 +22,17 @@ import { DevSchema } from '@/routes/dev/schema'
 import { DevModules } from '@/routes/dev/modules'
 import { DevDocs } from '@/routes/dev/docs'
 import { PackagesIndex } from '@/routes/packages/index'
+// Kitchen module views — auto-added by module install
+import {
+  KitchenPantry,
+  KitchenFridge,
+  KitchenFreezer,
+  KitchenRecipes,
+  KitchenRecipeDetail,
+  KitchenMealPlan,
+  KitchenShoppingList,
+  KitchenCookLog,
+} from '@kitchen-frontend'
 
 // ---------------------------------------------------------------------------
 // Root
@@ -190,6 +201,69 @@ const packagesRoute = createRoute({
 })
 
 // ---------------------------------------------------------------------------
+// Kitchen module routes — auto-added by module install
+// ---------------------------------------------------------------------------
+
+const kitchenPantryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/pantry',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenPantry,
+})
+
+const kitchenFridgeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/fridge',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenFridge,
+})
+
+const kitchenFreezerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/freezer',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenFreezer,
+})
+
+const kitchenRecipesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/recipes',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenRecipes,
+})
+
+const kitchenRecipeDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/recipes/$id',
+  validateSearch: () => ({} as Record<never, never>),
+  component: function KitchenRecipeDetailPage() {
+    const { id } = kitchenRecipeDetailRoute.useParams()
+    return <KitchenRecipeDetail id={id} />
+  },
+})
+
+const kitchenMealPlanRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/meal-plan',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenMealPlan,
+})
+
+const kitchenShoppingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/shopping',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenShoppingList,
+})
+
+const kitchenCookLogRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kitchen/cook-log',
+  validateSearch: () => ({} as Record<never, never>),
+  component: KitchenCookLog,
+})
+
+// ---------------------------------------------------------------------------
 // Dev routes (only visible/functional in dev mode)
 // ---------------------------------------------------------------------------
 
@@ -244,6 +318,15 @@ const routeTree = rootRoute.addChildren([
   devSchemaRoute,
   devModulesRoute,
   devDocsRoute,
+  // Kitchen module routes
+  kitchenPantryRoute,
+  kitchenFridgeRoute,
+  kitchenFreezerRoute,
+  kitchenRecipesRoute,
+  kitchenRecipeDetailRoute,
+  kitchenMealPlanRoute,
+  kitchenShoppingRoute,
+  kitchenCookLogRoute,
 ])
 
 export const router = createRouter({ routeTree })

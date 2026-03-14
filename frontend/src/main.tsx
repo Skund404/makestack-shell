@@ -5,6 +5,7 @@ import './index.css'
 import App from './App.tsx'
 import { loadTheme } from './theme/loader.ts'
 import { registerCoreWidgets } from './components/keywords/index.ts'
+import { registerAllModulePanels } from './modules/registry.ts'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,9 +16,10 @@ const queryClient = new QueryClient({
   },
 })
 
-// Init — load theme and register widgets before first render
+// Init — load theme and register widgets/panels before first render
 void loadTheme()
 registerCoreWidgets()
+registerAllModulePanels()
 
 // Global error handler — catches unhandled JS errors.
 // In dev mode: reports to POST /api/dev/error for server-side logging.
