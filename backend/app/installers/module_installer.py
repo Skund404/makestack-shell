@@ -290,6 +290,29 @@ class ModuleInstaller:
         await _mark_step("check_conflicts")
 
         # ------------------------------------------------------------------
+        # Step 3b: Check required peer modules are installed
+        # ------------------------------------------------------------------
+
+        for peer in module_manifest.peer_modules.get("required", []):
+            peer_name = peer["name"] if isinstance(peer, dict) else peer
+            row = await self._db.fetch_one(
+                "SELECT name FROM installed_modules WHERE name = ? AND enabled = 1",
+                [peer_name],
+            )
+            if not row:
+                msg = (
+                    f"Required peer module '{peer_name}' is not installed. "
+                    f"Install it first before installing '{manifest.name}'."
+                )
+                await _fail_tx("check_peers", msg)
+                return _fail_result(
+                    "check_peers", msg,
+                    f"Run: POST /api/packages/install with name='{peer_name}', then retry.",
+                )
+
+        await _mark_step("check_peers")
+
+        # ------------------------------------------------------------------
         # Step 4: Validate all migration files declare down()
         # ------------------------------------------------------------------
 
@@ -359,11 +382,31 @@ class ModuleInstaller:
             await self._run_migrations(manifest.name, package_path)
         except Exception as exc:
             msg = f"Migration failed: {exc}"
+            log.error(
+                "install_failed",
+                module=manifest.name,
+                step="run_migrations",
+                error=msg,
+            )
             await _fail_tx("run_migrations", msg)
             rolled_back, rb_warnings = await self._rollback(
                 tx_id, steps_completed, manifest.name, package_path,
                 snapshot_path, python_deps,
             )
+            exc_str = str(exc)
+            if "FOREIGN KEY" in exc_str:
+                suggestion = (
+                    "A required peer module may not be installed or enabled. "
+                    "Check manifest.json peer_modules.required and ensure all peers "
+                    "are installed and enabled before retrying."
+                )
+            elif "already exists" in exc_str:
+                suggestion = (
+                    "A table from a previous partial install may still exist. "
+                    "Check module_migrations for stale rows and retry."
+                )
+            else:
+                suggestion = "Check the migration file for errors and retry."
             return InstallResult(
                 success=False,
                 package_name=manifest.name,
@@ -375,11 +418,7 @@ class ModuleInstaller:
                 rolled_back=True,
                 rollback_clean=rolled_back,
                 warnings=rb_warnings,
-                suggestion=(
-                    "The migration may have been applied by a previous partial install. "
-                    "Check the module_migrations table for rows with this module name "
-                    "and remove them before retrying."
-                ),
+                suggestion=suggestion,
             )
 
         await _mark_step("run_migrations")
@@ -530,6 +569,18 @@ class ModuleInstaller:
 
         conn = self._db._require_connection()
 
+        # Pre-register with a placeholder so the module_migrations FK is satisfied.
+        # Step 8 (register) will UPDATE this row to enabled=1 with the real version.
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO installed_modules
+                (name, version, installed_at, enabled, package_path)
+            VALUES (?, 'installing', datetime('now'), 0, ?)
+            """,
+            (module_name, package_path),
+        )
+        await conn.commit()
+
         cursor = await conn.execute(
             "SELECT migration_id FROM module_migrations WHERE module_name = ?",
             (module_name,),
@@ -550,12 +601,26 @@ class ModuleInstaller:
             sys.modules[module_key] = mod
             spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
-            migration_id: str = getattr(mod, "ID", migration_file.stem)
+            migration_id: str = (
+                getattr(mod, "ID", None) or getattr(mod, "id", None) or migration_file.stem
+            )
             if migration_id in applied:
                 continue
 
             log.info("module_migration_applying", module=module_name, id=migration_id)
-            await mod.up(conn)
+            try:
+                await mod.up(conn)
+            except Exception as exc:
+                log.error(
+                    "module_migration_failed",
+                    module=module_name,
+                    migration=migration_file.name,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"Migration '{migration_id}' in {migration_file.name} failed: {exc}"
+                ) from exc
             await conn.execute(
                 "INSERT INTO module_migrations (module_name, migration_id, applied_at) "
                 "VALUES (?, ?, datetime('now'))",
@@ -595,7 +660,9 @@ class ModuleInstaller:
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
-            migration_id: str = getattr(mod, "ID", migration_file.stem)
+            migration_id: str = (
+                getattr(mod, "ID", None) or getattr(mod, "id", None) or migration_file.stem
+            )
             if migration_id not in applied_set:
                 continue
 
@@ -702,6 +769,20 @@ class ModuleInstaller:
                         warnings.append(
                             f"Rollback: could not delete snapshot at {snapshot_path}: {exc}"
                         )
+
+        # Remove any pre-registration placeholder row left by _run_migrations.
+        # This is a no-op if "register" already ran (row has version != 'installing')
+        # or if a snapshot restore already wiped it.
+        try:
+            await self._db.execute(
+                "DELETE FROM installed_modules WHERE name = ? AND version = 'installing'",
+                [package_name],
+            )
+        except Exception as exc:
+            warnings.append(
+                f"Rollback: could not remove placeholder row for '{package_name}': {exc}"
+            )
+            rollback_clean = False
 
         # Update transaction row (if it still exists after potential DB restore)
         try:
