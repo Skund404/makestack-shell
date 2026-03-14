@@ -517,9 +517,18 @@ class ModuleInstaller:
         )
 
     async def uninstall(self, name: str) -> InstallResult:
-        """Disable and de-register a module.
+        """Remove a module registration.
 
-        Tables created by the module are NOT dropped — data persists.
+        Hard-deletes the row from installed_modules so the module disappears
+        from the package list immediately without requiring a restart.
+
+        Module data tables are NOT dropped — data is preserved and will be
+        picked up automatically if the module is reinstalled later.
+        Migration records in module_migrations are also preserved so that
+        reinstallation correctly skips already-applied migrations.
+
+        The running module instance (routes, registry entries) stays active
+        until the next Shell restart, hence restart_required=True.
         The package cache directory is managed separately by the route handler.
         """
         row = await self._db.fetch_one(
@@ -536,7 +545,7 @@ class ModuleInstaller:
 
         version = row["version"]
         await self._db.execute(
-            "UPDATE installed_modules SET enabled = 0 WHERE name = ?", [name]
+            "DELETE FROM installed_modules WHERE name = ?", [name]
         )
 
         log.info("module_uninstalled", name=name)
@@ -547,9 +556,9 @@ class ModuleInstaller:
             version=version,
             restart_required=True,
             message=(
-                f"Module '{name}' has been disabled. "
-                "Module data tables are preserved. "
-                "Restart the Shell to complete uninstallation."
+                f"Module '{name}' has been removed. "
+                "Module data tables are preserved for reinstallation. "
+                "Restart the Shell to fully unload the running module."
             ),
         )
 

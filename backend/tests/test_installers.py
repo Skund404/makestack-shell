@@ -133,7 +133,7 @@ async def test_module_installer_fails_when_manifest_missing(db: UserDB, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_module_installer_uninstall_disables(db: UserDB, tmp_path: Path):
+async def test_module_installer_uninstall_removes_record(db: UserDB, tmp_path: Path):
     pkg_dir = _make_module_dir(tmp_path)
     installer = ModuleInstaller(db)
     await installer.install(str(pkg_dir), _manifest("test-pkg"))
@@ -142,8 +142,9 @@ async def test_module_installer_uninstall_disables(db: UserDB, tmp_path: Path):
     assert result.success is True
     assert result.restart_required is True
 
-    row = await db.fetch_one("SELECT enabled FROM installed_modules WHERE name = 'test-pkg'")
-    assert bool(row["enabled"]) is False
+    # Row is hard-deleted — module no longer appears in the package list
+    row = await db.fetch_one("SELECT name FROM installed_modules WHERE name = 'test-pkg'")
+    assert row is None
 
 
 @pytest.mark.asyncio

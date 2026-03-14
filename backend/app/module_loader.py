@@ -166,15 +166,36 @@ class ModuleRegistry:
 # ---------------------------------------------------------------------------
 
 
+def _fallback_paths(name: str) -> list[Path]:
+    """Return candidate module root directories to try when the recorded path is missing.
+
+    Handles the common dev layout where modules live in a sibling repo:
+        makestack-shell/         ← this file lives here (backend/app/)
+        makestack-addons/
+          modules/
+            {name}/              ← module root
+
+    Also handles a flat addons layout without the extra modules/ subdirectory.
+    """
+    # backend/app/module_loader.py → shell root is three levels up
+    shell_root = Path(__file__).parent.parent.parent
+    addons_root = shell_root.parent / "makestack-addons"
+    return [
+        addons_root / "modules" / name,
+        addons_root / name,
+    ]
+
+
 def _find_manifest_path(name: str, package_path: str | None) -> Path:
     """Locate manifest.json for a module."""
     if package_path:
         p = Path(package_path) / "manifest.json"
-        if not p.exists():
-            raise FileNotFoundError(
-                f"manifest.json not found at expected path: {p}"
-            )
-        return p
+        if p.exists():
+            return p
+        # Recorded path is stale — caller will attempt healing via _try_heal_package_path
+        raise FileNotFoundError(
+            f"manifest.json not found at expected path: {p}"
+        )
 
     # Installed Python package — try both naming conventions:
     # 1. {name_underscored} (simple)
@@ -478,6 +499,23 @@ async def load_modules(app: FastAPI, db: UserDB) -> ModuleRegistry:
         name: str = row["name"]
         package_path: str | None = row.get("package_path")
         logger = log.bind(module=name)
+
+        # Auto-heal stale package_path (e.g. after cache loss or path migration).
+        if package_path and not (Path(package_path) / "manifest.json").exists():
+            for candidate in _fallback_paths(name):
+                if (candidate / "manifest.json").exists():
+                    healed = str(candidate)
+                    logger.warning(
+                        "module_path_healed",
+                        old_path=package_path,
+                        new_path=healed,
+                    )
+                    await db.execute(
+                        "UPDATE installed_modules SET package_path = ? WHERE name = ?",
+                        [healed, name],
+                    )
+                    package_path = healed
+                    break
 
         try:
             loaded = await _load_module(name, package_path, db)
