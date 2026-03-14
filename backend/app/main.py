@@ -264,6 +264,20 @@ async def lifespan(app: FastAPI):
         for fm in module_registry.get_failed():
             log.error("module_failed", name=fm.name, error=fm.error)
 
+    # --- Frontend static files -------------------------------------------
+    # Mounted HERE (after load_modules) so module routes are registered first.
+    # StaticFiles.matches() always returns Match.FULL, so it must come last in
+    # app.routes or it would shadow every route added after create_app() returns.
+    # Only active when the built frontend exists (Docker / production).
+    import os as _os
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+    _frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    if _os.path.isdir(_frontend_dist) and not any(
+        getattr(r, "name", None) == "frontend" for r in app.routes
+    ):
+        app.mount("/", _StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+        log.info("frontend_static_mounted", path=_frontend_dist)
+
     # Wire module tools into the MCP server now that the registry is built.
     try:
         from mcp_server.transport import get_mcp_server
@@ -397,14 +411,11 @@ def create_app() -> FastAPI:
     from mcp_server.transport import create_sse_app
     app.mount("/mcp", create_sse_app())
 
-    # Mount frontend static files LAST so /api/* routes take priority.
-    # Only active when the built frontend exists (Docker / production).
-    import os
-    from fastapi.staticfiles import StaticFiles
-
-    frontend_dist = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
-    if os.path.isdir(frontend_dist):
-        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+    # NOTE: The frontend StaticFiles mount is intentionally NOT added here.
+    # It must be added AFTER load_modules() in the lifespan so that module
+    # routes (which are added during lifespan startup) are registered before
+    # the catch-all StaticFiles Mount. StaticFiles.matches() always returns
+    # Match.FULL, so it would shadow any routes added after it in app.routes.
 
     return app
 

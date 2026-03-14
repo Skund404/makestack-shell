@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { Loader2, Package, Settings, Link as LinkIcon } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
@@ -91,7 +92,15 @@ function PanelSlot({
 // ---------------------------------------------------------------------------
 
 function WorkshopHomeInner({ id }: { id: string }) {
-  const { workshopModules } = useWorkshopContext()
+  const { workshopModules, activeWorkshop, switchWorkshop } = useWorkshopContext()
+
+  // If navigated directly to /workshop/$id (e.g. from a bookmark or sidebar link)
+  // and this isn't the active workshop in context, switch to it.
+  useEffect(() => {
+    if (activeWorkshop?.id !== id) {
+      switchWorkshop(id)
+    }
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch panels for every active module in parallel.
   const moduleQueries = useQueries({

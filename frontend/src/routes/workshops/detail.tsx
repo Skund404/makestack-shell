@@ -16,9 +16,9 @@ import {
   useDeleteWorkshop,
   useAddToWorkshop,
   useRemoveFromWorkshop,
-  useSetActiveWorkshop,
   useActiveWorkshop,
 } from '@/hooks/use-workshops'
+import { useWorkshopContext } from '@/context/WorkshopContext'
 import { useSearch } from '@/hooks/use-catalogue'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
@@ -150,7 +150,7 @@ function WorkshopDetailView({ id }: { id: string }) {
   const updateMutation = useUpdateWorkshop()
   const deleteMutation = useDeleteWorkshop()
   const removeMemberMutation = useRemoveFromWorkshop()
-  const setActiveMutation = useSetActiveWorkshop()
+  const { switchWorkshop } = useWorkshopContext()
 
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState('')
@@ -260,8 +260,7 @@ function WorkshopDetailView({ id }: { id: string }) {
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => setActiveMutation.mutate(ws.id)}
-                  disabled={setActiveMutation.isPending}
+                  onClick={() => switchWorkshop(ws.id)}
                 >
                   Set active
                 </Button>

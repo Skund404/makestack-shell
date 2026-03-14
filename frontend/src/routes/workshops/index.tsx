@@ -4,9 +4,9 @@ import { Plus, Loader2, AlertCircle, FlaskConical } from 'lucide-react'
 import {
   useWorkshopList,
   useCreateWorkshop,
-  useSetActiveWorkshop,
   useActiveWorkshop,
 } from '@/hooks/use-workshops'
+import { useWorkshopContext } from '@/context/WorkshopContext'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -137,7 +137,7 @@ export function WorkshopsIndex() {
 
   const { data, isLoading, isError } = useWorkshopList()
   const { data: activeWorkshop } = useActiveWorkshop()
-  const setActiveMutation = useSetActiveWorkshop()
+  const { switchWorkshop } = useWorkshopContext()
 
   if (isLoading) {
     return (
@@ -187,7 +187,7 @@ export function WorkshopsIndex() {
                   workshop={ws}
                   isActive={activeWorkshop?.id === ws.id}
                   onClick={() => void navigate({ to: '/workshops/detail', search: { id: ws.id } })}
-                  onSetActive={() => setActiveMutation.mutate(ws.id)}
+                  onSetActive={() => switchWorkshop(ws.id)}
                 />
               ))}
             </div>

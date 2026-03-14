@@ -63,14 +63,16 @@ const WorkshopContext = createContext<WorkshopContextValue>({
 // Data fetcher — called once per workshop switch
 // ---------------------------------------------------------------------------
 
-async function fetchWorkshopData(id: string): Promise<{ nav: NavItem[]; modules: string[] }> {
-  const [navData, modulesData] = await Promise.all([
+async function fetchWorkshopData(id: string): Promise<{ nav: NavItem[]; modules: string[]; workshop: Workshop }> {
+  const [navData, modulesData, workshop] = await Promise.all([
     apiGet<WorkshopNav>(`/api/workshops/${id}/nav`),
     apiGet<WorkshopModule[]>(`/api/workshops/${id}/modules`),
+    apiGet<Workshop>(`/api/workshops/${id}`),
   ])
   return {
     nav: navData.items,
     modules: modulesData.filter((m) => m.enabled).map((m) => m.module_name),
+    workshop,
   }
 }
 
@@ -126,12 +128,16 @@ export function WorkshopContextProvider({ children }: { children: React.ReactNod
         return
       }
 
-      // Optimistically set from cached workshop list (user just picked from the list).
-      const ws = workshopList?.items.find((w) => w.id === id) ?? null
-      setActiveWorkshop(ws)
+      // Optimistically set from cached workshop list if available.
+      // Only apply if found — never set null optimistically (list may not be loaded yet).
+      const ws = workshopList?.items.find((w) => w.id === id)
+      if (ws) setActiveWorkshop(ws)
 
-      // Fetch nav and modules for the selected workshop, then navigate to its home.
-      void fetchWorkshopData(id).then(({ nav, modules }) => {
+      // Fetch nav, modules, and the workshop itself, then navigate to its home.
+      // setActiveWorkshop from the API response ensures it's always set correctly,
+      // even when workshopList hasn't loaded (e.g. direct URL navigation).
+      void fetchWorkshopData(id).then(({ nav, modules, workshop }) => {
+        setActiveWorkshop(workshop)
         setWorkshopNav(nav)
         setWorkshopModules(modules)
         void navigate({ to: '/workshop/$id', params: { id } })
