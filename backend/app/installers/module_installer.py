@@ -295,19 +295,20 @@ class ModuleInstaller:
 
         for peer in module_manifest.peer_modules.get("required", []):
             peer_name = peer["name"] if isinstance(peer, dict) else peer
+            # Check installed_modules (enabled or not — installed but pending restart counts)
             row = await self._db.fetch_one(
-                "SELECT name FROM installed_modules WHERE name = ? AND enabled = 1",
+                "SELECT name FROM installed_modules WHERE name = ?",
                 [peer_name],
             )
             if not row:
                 msg = (
                     f"Required peer module '{peer_name}' is not installed. "
-                    f"Install it first before installing '{manifest.name}'."
+                    f"Install '{peer_name}' first, then install '{manifest.name}'."
                 )
                 await _fail_tx("check_peers", msg)
                 return _fail_result(
                     "check_peers", msg,
-                    f"Run: POST /api/packages/install with name='{peer_name}', then retry.",
+                    f"Install the peer first: POST /api/packages/install with name='{peer_name}', then retry.",
                 )
 
         await _mark_step("check_peers")

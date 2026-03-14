@@ -6,7 +6,7 @@
  *   Browse    — search across configured registries, install from results
  *   Registries — manage registry sources (add / remove / refresh)
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import {
   Package,
   Plus,
@@ -21,6 +21,7 @@ import {
   RotateCcw,
   Terminal,
   XCircle,
+  Layers,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -29,7 +30,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Input } from '@/components/ui/Input'
 import { Tabs, TabContent } from '@/components/ui/Tabs'
 import { cn } from '@/lib/utils'
-import type { InstalledPackage, PackageSearchResult, RegistryRecord } from '@/lib/types'
+import type { InstalledPackage, PackageSearchResult, RegistryRecord, Workshop } from '@/lib/types'
 import {
   usePackageList,
   usePackageSearch,
@@ -41,8 +42,9 @@ import {
   useRemoveRegistry,
   useRefreshRegistries,
 } from '@/hooks/use-packages'
+import { useWorkshopList } from '@/hooks/use-workshops'
 import type { InstallResult } from '@/lib/types'
-import { ApiError } from '@/lib/api'
+import { ApiError, apiGet, apiPost } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Type badge
@@ -92,6 +94,65 @@ function SourceLabel({ pkg }: { pkg: InstalledPackage }) {
 }
 
 // ---------------------------------------------------------------------------
+// Restart button — calls /api/system/restart then polls until shell is back
+// ---------------------------------------------------------------------------
+
+function RestartButton() {
+  const [state, setState] = useState<'idle' | 'restarting' | 'back'>('idle')
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current !== null) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  const handleRestart = async () => {
+    setState('restarting')
+    try {
+      await apiPost('/api/system/restart', {})
+    } catch {
+      // Expected — the server drops the connection mid-restart
+    }
+    // Poll /api/status until the shell responds again
+    pollRef.current = setInterval(() => {
+      void apiGet('/api/status').then(() => {
+        if (pollRef.current !== null) clearInterval(pollRef.current)
+        setState('back')
+      }).catch(() => {
+        // Still restarting — keep polling
+      })
+    }, 1000)
+  }
+
+  if (state === 'back') {
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <CheckCircle size={11} className="text-success shrink-0" />
+        <span className="text-success">Shell restarted.</span>
+        <button
+          onClick={() => window.location.reload()}
+          className="text-accent hover:underline"
+        >
+          Refresh page to activate
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => void handleRestart()}
+      disabled={state === 'restarting'}
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border border-border text-text-muted hover:border-border-bright hover:text-text transition-colors disabled:opacity-50"
+    >
+      <RotateCcw size={11} className={state === 'restarting' ? 'animate-spin' : ''} />
+      {state === 'restarting' ? 'Restarting…' : 'Restart Shell'}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Install result display
 // ---------------------------------------------------------------------------
 
@@ -118,9 +179,12 @@ function InstallResultPanel({ result }: { result: InstallResult }) {
       </div>
 
       {result.restart_required && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/20 text-warning">
-          <RotateCcw size={12} />
-          <span className="font-medium">Shell restart required to activate this package.</span>
+        <div className="flex items-center justify-between gap-3 px-3 py-2 rounded bg-warning/10 border border-warning/20">
+          <div className="flex items-center gap-2 text-warning text-xs font-medium">
+            <RotateCcw size={12} className="shrink-0" />
+            Restart required to activate this package.
+          </div>
+          <RestartButton />
         </div>
       )}
 
@@ -135,6 +199,179 @@ function InstallResultPanel({ result }: { result: InstallResult }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Workshop assignment step — shown after a successful module install
+// ---------------------------------------------------------------------------
+
+function WorkshopAssignStep({ moduleName }: { moduleName: string }) {
+  const { data, isLoading } = useWorkshopList()
+  const [assignedTo, setAssignedTo] = useState<string | null>(null)
+  const [assigning, setAssigning] = useState(false)
+  const [skipped, setSkipped] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const workshops: Workshop[] = data?.items ?? []
+
+  const handleAssign = async (workshop: Workshop) => {
+    setAssigning(true)
+    setError(null)
+    try {
+      await apiPost(`/api/workshops/${workshop.id}/modules`, {
+        module_name: moduleName,
+        sort_order: 0,
+      })
+      setAssignedTo(workshop.name)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to assign module to workshop')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  if (skipped || assignedTo) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-text-muted pt-1">
+        <CheckCircle size={11} className="text-success shrink-0" />
+        {assignedTo
+          ? <span>Added to <span className="font-medium text-text">{assignedTo}</span>. Open Workshop Settings to reorder.</span>
+          : <span className="text-text-faint">Skipped — assign later via Workshop Settings.</span>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-t border-border pt-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+        <Layers size={11} />
+        Add to a workshop
+      </div>
+
+      {isLoading && (
+        <p className="text-xs text-text-faint">Loading workshops…</p>
+      )}
+
+      {!isLoading && workshops.length === 0 && (
+        <p className="text-xs text-text-faint">
+          No workshops yet. Create one in Workshops, then assign this module via Workshop Settings.
+        </p>
+      )}
+
+      {!isLoading && workshops.length > 0 && (
+        <div className="space-y-1">
+          {workshops.map((ws) => (
+            <button
+              key={ws.id}
+              onClick={() => void handleAssign(ws)}
+              disabled={assigning}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 rounded border text-left text-xs transition-colors',
+                'border-border hover:border-accent/40 hover:bg-accent/5 disabled:opacity-50',
+              )}
+            >
+              {ws.icon && <span className="shrink-0">{ws.icon}</span>}
+              <span className="font-medium text-text">{ws.name}</span>
+              {ws.description && (
+                <span className="text-text-faint truncate">{ws.description}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="text-xs text-danger">{error}</p>}
+
+      <button
+        onClick={() => setSkipped(true)}
+        className="text-xs text-text-faint hover:text-text-muted transition-colors"
+      >
+        Skip for now
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Assign module to workshop dialog — opened from module rows in InstalledTab
+// ---------------------------------------------------------------------------
+
+function AssignModuleDialog({
+  moduleName,
+  open,
+  onOpenChange,
+}: {
+  moduleName: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const { data, isLoading } = useWorkshopList()
+  const [results, setResults] = useState<Record<string, 'adding' | 'done' | 'error'>>({})
+
+  const workshops: Workshop[] = data?.items ?? []
+
+  const handleAssign = async (workshopId: string) => {
+    setResults((r) => ({ ...r, [workshopId]: 'adding' }))
+    try {
+      await apiPost(`/api/workshops/${workshopId}/modules`, { module_name: moduleName, sort_order: 0 })
+      setResults((r) => ({ ...r, [workshopId]: 'done' }))
+    } catch {
+      setResults((r) => ({ ...r, [workshopId]: 'error' }))
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} title={`Assign ${moduleName} to workshop`}>
+      <div className="space-y-2">
+        {isLoading && <p className="text-xs text-text-faint">Loading workshops…</p>}
+
+        {!isLoading && workshops.length === 0 && (
+          <div className="text-xs text-text-faint space-y-1 py-2">
+            <p>No workshops yet.</p>
+            <p>Go to <span className="text-text font-medium">Workshops</span> to create one, then come back here to assign this module.</p>
+          </div>
+        )}
+
+        {workshops.map((ws) => {
+          const state = results[ws.id]
+          return (
+            <div key={ws.id} className="flex items-center gap-2 px-3 py-2 rounded border border-border bg-surface">
+              {ws.icon && <span className="shrink-0 text-sm">{ws.icon}</span>}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-text truncate">{ws.name}</p>
+                {ws.description && <p className="text-xs text-text-faint truncate">{ws.description}</p>}
+              </div>
+              {state === 'done' ? (
+                <span className="flex items-center gap-1 text-xs text-success shrink-0">
+                  <CheckCircle size={11} /> Added
+                </span>
+              ) : state === 'error' ? (
+                <span className="text-xs text-danger shrink-0">Failed</span>
+              ) : (
+                <button
+                  onClick={() => void handleAssign(ws.id)}
+                  disabled={state === 'adding'}
+                  className="shrink-0 px-2.5 py-1 rounded text-xs font-medium border border-border text-text-muted hover:border-accent/40 hover:text-accent transition-colors disabled:opacity-50"
+                >
+                  {state === 'adding' ? 'Adding…' : 'Add'}
+                </button>
+              )}
+            </div>
+          )
+        })}
+
+        {Object.values(results).some((s) => s === 'done') && (
+          <p className="text-xs text-text-faint pt-1">
+            The module will appear in the workshop navigation after the next restart.
+          </p>
+        )}
+
+        <div className="flex justify-end pt-1">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Close</Button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 
@@ -284,13 +521,34 @@ function InstallDialog({ open, onOpenChange, prefillName }: InstallDialogProps) 
 
         {/* Error */}
         {install.isError && (
-          <div className="rounded border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">
-            {install.error instanceof ApiError ? install.error.message : 'Install failed'}
+          <div className="rounded border border-danger/30 bg-danger/5 px-3 py-2 text-xs space-y-1">
+            <p className="text-danger">
+              {install.error instanceof ApiError ? install.error.message : 'Install failed'}
+            </p>
+            {install.error instanceof ApiError &&
+              typeof install.error.detail === 'object' &&
+              install.error.detail !== null &&
+              'suggestion' in (install.error.detail as object) && (
+                <p className="text-text-faint">
+                  {String((install.error.detail as Record<string, unknown>).suggestion)}
+                </p>
+              )}
           </div>
         )}
 
         {/* Result */}
         {result && <InstallResultPanel result={result} />}
+
+        {/* Workshop assignment — only when module is already active (no restart needed) */}
+        {result?.success && result.package_type === 'module' && !result.restart_required && (
+          <WorkshopAssignStep moduleName={result.package_name} />
+        )}
+        {result?.success && result.package_type === 'module' && result.restart_required && (
+          <p className="text-xs text-text-faint pt-1">
+            After restarting, assign this module to a workshop using the{' '}
+            <Layers size={10} className="inline" />{' '}button on its row in the Installed tab.
+          </p>
+        )}
 
         {/* Actions */}
         <div className="flex justify-end gap-2 pt-1">
@@ -378,7 +636,31 @@ function UninstallDialog({ pkg, onOpenChange }: UninstallDialogProps) {
           </>
         ) : (
           <>
-            <InstallResultPanel result={result} />
+            <div className={cn(
+              'rounded border p-3 space-y-2 text-xs',
+              result.success ? 'border-success/30 bg-success/5' : 'border-danger/30 bg-danger/5',
+            )}>
+              <div className="flex items-start gap-2">
+                {result.success
+                  ? <CheckCircle size={14} className="text-success shrink-0 mt-0.5" />
+                  : <XCircle size={14} className="text-danger shrink-0 mt-0.5" />}
+                <p className={result.success ? 'text-success font-medium' : 'text-danger font-medium'}>
+                  {result.success ? `Removed ${result.package_name}` : `Failed: ${result.message}`}
+                </p>
+              </div>
+              {result.success && result.message && (
+                <p className="text-text-muted text-xs">{result.message}</p>
+              )}
+              {result.restart_required && (
+                <div className="flex items-center justify-between gap-3 px-3 py-2 rounded bg-warning/10 border border-warning/20">
+                  <div className="flex items-center gap-2 text-warning text-xs font-medium">
+                    <RotateCcw size={12} className="shrink-0" />
+                    Restart required to complete removal.
+                  </div>
+                  <RestartButton />
+                </div>
+              )}
+            </div>
             <div className="flex justify-end">
               <Button onClick={() => onOpenChange(false)}>Close</Button>
             </div>
@@ -403,6 +685,7 @@ function InstalledTab() {
   const [search, setSearch] = useState('')
   const [uninstallTarget, setUninstallTarget] = useState<InstalledPackage | null>(null)
   const [updateResults, setUpdateResults] = useState<Record<string, InstallResult>>({})
+  const [assignTarget, setAssignTarget] = useState<string | null>(null)
 
   const packages = data?.items ?? []
   const filtered = packages.filter((p) => {
@@ -487,9 +770,8 @@ function InstalledTab() {
                 const updateResult = updateResults[pkg.name]
                 const isUpdating = updatePkg.isPending && updatePkg.variables?.name === pkg.name
                 return (
-                  <>
+                  <Fragment key={pkg.name}>
                     <tr
-                      key={pkg.name}
                       className={cn(
                         'border-b border-border last:border-0 hover:bg-surface-el/40 transition-colors',
                         i % 2 === 0 ? 'bg-bg' : 'bg-surface',
@@ -516,6 +798,15 @@ function InstalledTab() {
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex justify-end gap-1.5">
+                          {pkg.type === 'module' && (
+                            <button
+                              onClick={() => setAssignTarget(pkg.name)}
+                              title="Assign to workshop"
+                              className="p-1 rounded text-text-faint hover:text-accent hover:bg-accent/10 transition-colors"
+                            >
+                              <Layers size={13} />
+                            </button>
+                          )}
                           {pkg.git_url && (
                             <button
                               onClick={() => handleUpdate(pkg)}
@@ -537,13 +828,13 @@ function InstalledTab() {
                       </td>
                     </tr>
                     {updateResult && (
-                      <tr key={`${pkg.name}-result`} className="border-b border-border last:border-0">
+                      <tr className="border-b border-border last:border-0">
                         <td colSpan={7} className="px-3 pb-2.5">
                           <InstallResultPanel result={updateResult} />
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -555,6 +846,14 @@ function InstalledTab() {
         pkg={uninstallTarget}
         onOpenChange={(open) => { if (!open) setUninstallTarget(null) }}
       />
+
+      {assignTarget && (
+        <AssignModuleDialog
+          moduleName={assignTarget}
+          open={!!assignTarget}
+          onOpenChange={(open) => { if (!open) setAssignTarget(null) }}
+        />
+      )}
     </div>
   )
 }

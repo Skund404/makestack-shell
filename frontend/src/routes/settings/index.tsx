@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Server, Database, Clock, Power, RotateCcw } from 'lucide-react'
+import { Loader2, Server, Database, Clock, Power, RotateCcw, AlertTriangle, CheckCircle } from 'lucide-react'
 import { apiGet, apiPut, apiPost } from '@/lib/api'
 import { applyTheme } from '@/theme/loader'
 import { cn } from '@/lib/utils'
@@ -282,6 +282,155 @@ function SystemControls() {
 }
 
 // ---------------------------------------------------------------------------
+// Factory reset — wipes UserDB, backs up first, restarts
+// ---------------------------------------------------------------------------
+
+const RESET_LOSES = [
+  'All installed modules and packages',
+  'All workshops and their module assignments',
+  'All inventory items',
+  'All user preferences and theme selection',
+  'All configured registries',
+]
+
+type ResetState = 'idle' | 'confirming' | 'resetting' | 'back'
+
+function FactoryResetSection() {
+  const [state, setState] = useState<ResetState>('idle')
+  const [confirmText, setConfirmText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => { if (pollRef.current !== null) clearInterval(pollRef.current) }
+  }, [])
+
+  const handleReset = async () => {
+    setState('resetting')
+    setError(null)
+    try {
+      await apiPost('/api/system/reset', {})
+    } catch {
+      // Server drops the connection as it restarts — expected
+    }
+    pollRef.current = setInterval(() => {
+      void apiGet('/api/status').then(() => {
+        if (pollRef.current !== null) clearInterval(pollRef.current)
+        setState('back')
+      }).catch(() => { /* still restarting */ })
+    }, 1000)
+  }
+
+  if (state === 'back') {
+    return (
+      <div className="rounded border border-success/30 bg-success/5 px-4 py-3 space-y-2">
+        <div className="flex items-center gap-2 text-success text-sm font-medium">
+          <CheckCircle size={14} />
+          Reset complete. Makestack is back with a clean slate.
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="text-xs text-accent hover:underline"
+        >
+          Reload page
+        </button>
+      </div>
+    )
+  }
+
+  if (state === 'resetting') {
+    return (
+      <div className="rounded border border-danger/20 bg-danger/5 px-4 py-3 flex items-center gap-3 text-sm text-danger/80">
+        <Loader2 size={14} className="animate-spin shrink-0" />
+        Resetting… waiting for Shell to come back online.
+      </div>
+    )
+  }
+
+  if (state === 'confirming') {
+    return (
+      <div className="rounded border border-danger/30 bg-danger/5 p-4 space-y-4">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle size={15} className="text-danger shrink-0 mt-0.5" />
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text">This will permanently delete:</p>
+            <ul className="space-y-1">
+              {RESET_LOSES.map((item) => (
+                <li key={item} className="flex items-center gap-2 text-xs text-text-muted">
+                  <span className="w-1 h-1 rounded-full bg-danger/60 shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-text-faint pt-1">
+              A backup of your database is saved automatically before deletion.
+              The catalogue (Core) is <span className="text-text font-medium">not affected</span>.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-text-muted">
+            Type <span className="font-mono text-danger">RESET</span> to confirm
+          </label>
+          <input
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder="RESET"
+            autoFocus
+            className={cn(
+              'h-8 w-full rounded border bg-surface px-2.5 text-sm font-mono focus:outline-none transition-colors',
+              confirmText === 'RESET'
+                ? 'border-danger/50 text-danger'
+                : 'border-border text-text',
+            )}
+          />
+        </div>
+
+        {error && <p className="text-xs text-danger">{error}</p>}
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => void handleReset()}
+            disabled={confirmText !== 'RESET'}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-danger text-white hover:bg-danger/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Reset to defaults
+          </button>
+          <button
+            onClick={() => { setState('idle'); setConfirmText('') }}
+            className="px-3 py-1.5 rounded text-xs text-text-muted hover:text-text transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded border border-danger/20 bg-surface">
+      <div className="flex items-start gap-3 px-4 py-3">
+        <AlertTriangle size={14} className="text-danger/70 shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <p className="text-sm text-text">Reset to defaults</p>
+          <p className="text-xs text-text-faint">
+            Wipe all modules, workshops, inventory, and preferences. A backup is saved first.
+            The catalogue is not affected.
+          </p>
+        </div>
+        <button
+          onClick={() => setState('confirming')}
+          className="shrink-0 px-2.5 py-1 rounded text-xs font-medium border border-danger/30 text-danger/80 hover:bg-danger/10 transition-colors"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Settings page — tabbed
 // ---------------------------------------------------------------------------
 
@@ -341,6 +490,12 @@ export function SettingsIndex() {
             </div>
           </section>
         )}
+      </div>
+
+      {/* Danger Zone — always visible at the bottom, outside tab system */}
+      <div className="pt-4 border-t border-border space-y-3">
+        <h2 className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--ms-danger)' }}>Danger Zone</h2>
+        <FactoryResetSection />
       </div>
     </div>
   )

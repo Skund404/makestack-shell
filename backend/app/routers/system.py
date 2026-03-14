@@ -362,10 +362,101 @@ async def _shutdown_after_response() -> None:
     os.kill(os.getpid(), signal.SIGTERM)
 
 
+def _build_restart_argv() -> list[str]:
+    """Build the argv for os.execv that correctly restarts the process.
+
+    When started as `python3 -m uvicorn ...`, sys.argv[0] is the absolute path
+    to uvicorn/__main__.py.  Replaying that path directly puts the uvicorn
+    package directory at sys.path[0], causing uvicorn/logging.py to shadow
+    the stdlib logging module (circular import).
+
+    Detect this case by checking for a __main__.py suffix and reconstruct the
+    `-m <package>` form so Python imports the module cleanly.
+    """
+    import pathlib
+    argv0 = sys.argv[0]
+    if pathlib.Path(argv0).name == "__main__.py":
+        # e.g. /usr/local/lib/.../uvicorn/__main__.py → python3 -m uvicorn <rest>
+        pkg_name = pathlib.Path(argv0).parent.name
+        return [sys.executable, "-m", pkg_name] + sys.argv[1:]
+    return [sys.executable] + sys.argv
+
+
+def _extract_port(argv: list[str]) -> int:
+    """Extract the --port value from a uvicorn argv list, defaulting to 3000."""
+    for i, arg in enumerate(argv):
+        if arg == "--port" and i + 1 < len(argv):
+            try:
+                return int(argv[i + 1])
+            except ValueError:
+                pass
+    return 3000
+
+
+async def _exec_restart() -> None:
+    """Restart the Shell cleanly, even when running under uvicorn --reload.
+
+    With --reload there are two processes that hold the server socket FD:
+      • the reloader (our parent), and
+      • the worker (us, the process handling HTTP requests).
+
+    os.execv does NOT release inherited FDs, so if we simply exec in-place the
+    new uvicorn fails to bind ("Address already in use").
+
+    Solution — three-step handoff:
+      1. Spawn a watchdog in its own session with close_fds=True (no socket FDs).
+         The watchdog polls the port until it is free, then exec's into fresh uvicorn.
+      2. Kill the reloader (SIGTERM) — releases the reloader's socket FD.
+      3. os._exit(0) immediately — releases OUR socket FD.
+         Port is now fully released; watchdog detects this and starts the new server.
+    """
+    restart_argv = _build_restart_argv()
+    log.info("shell_restart_exec", argv=restart_argv)
+    port = _extract_port(restart_argv)
+
+    # Watchdog: wait for port to be free, then exec into new uvicorn.
+    watchdog = "\n".join([
+        "import socket, time, os",
+        f"argv = {restart_argv!r}",
+        "for _ in range(40):",
+        f"    try:",
+        f"        s = socket.create_connection(('127.0.0.1', {port}), timeout=0.2)",
+        f"        s.close()",
+        f"        time.sleep(0.3)",
+        f"    except OSError:",
+        f"        break",
+        "os.execvp(argv[0], argv)",
+    ])
+    subprocess.Popen(
+        [sys.executable, "-c", watchdog],
+        start_new_session=True,
+        close_fds=True,
+        cwd=os.getcwd(),
+        env=os.environ.copy(),
+    )
+
+    # Brief pause so the watchdog process is alive before we disappear.
+    await asyncio.sleep(0.15)
+
+    # Mask SIGTERM so the reloader's cascade doesn't interrupt our exit path.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    # Kill the reloader — releases its copy of the server socket.
+    ppid = os.getppid()
+    if ppid > 1:
+        try:
+            os.kill(ppid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    # Exit immediately — releases our copy of the server socket.
+    os._exit(0)
+
+
 async def _restart_after_response() -> None:
     await asyncio.sleep(0.4)
     log.info("shell_restart_requested")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    await _exec_restart()
 
 
 def _find_pid_on_port(port: int) -> list[int]:
@@ -401,6 +492,65 @@ async def restart_shell() -> dict:
     """
     asyncio.create_task(_restart_after_response())
     return {"status": "restarting", "message": "Shell is restarting. Poll /api/status to detect when it is back."}
+
+
+async def _reset_after_response(db: UserDB) -> None:
+    """Back up, delete, and restart — runs after the HTTP response is sent."""
+    await asyncio.sleep(0.4)
+    log.info("factory_reset_requested")
+
+    db_path = db.path
+
+    # 1. Backup before destruction
+    if db_path != ":memory:":
+        from datetime import datetime
+        from pathlib import Path as _Path
+        backup = str(_Path(db_path).with_suffix(
+            f"-prereset-{datetime.now().strftime('%Y%m%d-%H%M%S')}.sqlite"
+        ))
+        try:
+            await db.backup(backup)
+            log.info("factory_reset_backed_up", backup=backup)
+        except Exception as exc:
+            log.warning("factory_reset_backup_failed", error=str(exc))
+
+    # 2. Close the connection
+    await db.close()
+
+    # 3. Delete the database so the fresh start recreates it from scratch
+    if db_path != ":memory:":
+        try:
+            os.unlink(db_path)
+            log.info("factory_reset_db_deleted", path=db_path)
+        except OSError as exc:
+            log.error("factory_reset_db_delete_failed", error=str(exc))
+            return
+
+    # 4. Hand off to a fresh process via the watchdog restart.
+    await _exec_restart()
+
+
+@router.post("/system/reset", summary="Reset Makestack to factory defaults")
+async def reset_to_defaults(request: Request) -> dict:
+    """Delete the UserDB and restart with a clean slate.
+
+    Wipes: installed modules, workshops, inventory, preferences, registries,
+    and all module tables (kitchen_*, inventory_stock_*, etc.).
+
+    Preserves: the catalogue (Core's git repo is not touched).
+
+    A timestamped backup is saved alongside the database before deletion so
+    the data can be recovered manually if needed.
+
+    The response is sent before the reset begins. The UI should poll
+    /api/status until it gets a successful response, then reload.
+    """
+    db: UserDB = request.app.state.userdb
+    asyncio.create_task(_reset_after_response(db))
+    return {
+        "status": "resetting",
+        "message": "Resetting to defaults and restarting. Poll /api/status to detect when it is back.",
+    }
 
 
 @router.post("/system/core/shutdown", summary="Shut down the Core process")

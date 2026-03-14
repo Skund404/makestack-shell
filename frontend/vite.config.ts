@@ -8,10 +8,17 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      // Module frontend bundles — resolved at build time when modules are installed.
-      // Each key maps to the module's frontend/ directory via its package_path.
+      // Module frontend aliases — one entry per installed module, auto-generated
+      // by scripts/generate_module_registry.py on install/uninstall.
       '@kitchen-frontend': path.resolve(__dirname, '../../makestack-addons/modules/kitchen/frontend'),
     },
+    // Ensure module files outside the project root use the shell's copies of
+    // shared packages (React, TanStack, etc.) rather than failing to resolve.
+    dedupe: [
+      'react', 'react-dom', 'react/jsx-runtime',
+      '@tanstack/react-query', '@tanstack/react-router',
+      'lucide-react',
+    ],
   },
   server: {
     proxy: {

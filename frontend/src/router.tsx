@@ -3,6 +3,7 @@ import {
   createRoute,
   createRouter,
   redirect,
+  useLocation,
 } from '@tanstack/react-router'
 import { Layout } from '@/components/layout/Layout'
 import { CatalogueIndex } from '@/routes/catalogue/index'
@@ -22,17 +23,31 @@ import { DevSchema } from '@/routes/dev/schema'
 import { DevModules } from '@/routes/dev/modules'
 import { DevDocs } from '@/routes/dev/docs'
 import { PackagesIndex } from '@/routes/packages/index'
-// Kitchen module views — auto-added by module install
-import {
-  KitchenPantry,
-  KitchenFridge,
-  KitchenFreezer,
-  KitchenRecipes,
-  KitchenRecipeDetail,
-  KitchenMealPlan,
-  KitchenShoppingList,
-  KitchenCookLog,
-} from '@kitchen-frontend'
+import { resolveView } from '@/modules/view-registry'
+
+// ---------------------------------------------------------------------------
+// Module view renderer — catch-all for installed module views.
+//
+// Modules register their views in view-registry.ts (via registerAllModules()
+// in main.tsx). This component is used as the router's defaultNotFoundComponent
+// so any path not matched by a shell route is checked against the registry.
+// ---------------------------------------------------------------------------
+
+function ModuleViewRenderer() {
+  const location = useLocation()
+  const resolved = resolveView(location.pathname)
+
+  if (!resolved) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm text-text-faint">
+        Page not found.
+      </div>
+    )
+  }
+
+  const { component: Component, params } = resolved
+  return <Component {...params} />
+}
 
 // ---------------------------------------------------------------------------
 // Root
@@ -201,69 +216,6 @@ const packagesRoute = createRoute({
 })
 
 // ---------------------------------------------------------------------------
-// Kitchen module routes — auto-added by module install
-// ---------------------------------------------------------------------------
-
-const kitchenPantryRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/pantry',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenPantry,
-})
-
-const kitchenFridgeRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/fridge',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenFridge,
-})
-
-const kitchenFreezerRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/freezer',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenFreezer,
-})
-
-const kitchenRecipesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/recipes',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenRecipes,
-})
-
-const kitchenRecipeDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/recipes/$id',
-  validateSearch: () => ({} as Record<never, never>),
-  component: function KitchenRecipeDetailPage() {
-    const { id } = kitchenRecipeDetailRoute.useParams()
-    return <KitchenRecipeDetail id={id} />
-  },
-})
-
-const kitchenMealPlanRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/meal-plan',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenMealPlan,
-})
-
-const kitchenShoppingRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/shopping',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenShoppingList,
-})
-
-const kitchenCookLogRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/kitchen/cook-log',
-  validateSearch: () => ({} as Record<never, never>),
-  component: KitchenCookLog,
-})
-
-// ---------------------------------------------------------------------------
 // Dev routes (only visible/functional in dev mode)
 // ---------------------------------------------------------------------------
 
@@ -318,18 +270,12 @@ const routeTree = rootRoute.addChildren([
   devSchemaRoute,
   devModulesRoute,
   devDocsRoute,
-  // Kitchen module routes
-  kitchenPantryRoute,
-  kitchenFridgeRoute,
-  kitchenFreezerRoute,
-  kitchenRecipesRoute,
-  kitchenRecipeDetailRoute,
-  kitchenMealPlanRoute,
-  kitchenShoppingRoute,
-  kitchenCookLogRoute,
 ])
 
-export const router = createRouter({ routeTree })
+export const router = createRouter({
+  routeTree,
+  defaultNotFoundComponent: ModuleViewRenderer,
+})
 
 declare module '@tanstack/react-router' {
   interface Register {
