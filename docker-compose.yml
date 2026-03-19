@@ -16,7 +16,7 @@ services:
   core:
     image: makestack/core:latest
     # To build Core locally (requires makestack-core checkout sibling to this repo):
-    # build: ../makestack-core
+    build: ../makestack-core
     ports:
       - "8420:8420"
     volumes:

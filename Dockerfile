@@ -23,8 +23,14 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci --prefer-offline
 
-# Copy source and build.
+# Copy source.
 COPY frontend/ ./
+
+# Reset auto-generated module files — local dev files reference absolute paths
+# outside the build context. Modules are installed at runtime via the package manager.
+RUN cp src/modules/registry.template.ts src/modules/registry.ts && \
+    sed -i "/'@.*-frontend':/d" vite.config.ts
+
 RUN npm run build
 # Result: /app/frontend/dist/
 
@@ -47,7 +53,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY mcp_server/ ./mcp_server/
 COPY cli/ ./cli/
-COPY makestack_sdk/ ./makestack_sdk/ 2>/dev/null || true
+COPY makestack_sdk/ ./makestack_sdk/
 
 # Copy the compiled frontend from stage 1.
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist

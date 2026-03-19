@@ -28,314 +28,295 @@ Makestack is a modular project management and ERP toolkit for makers (leatherwor
 - Hosts modules (Python backend + React frontend)
 - Provides the themed UI, keyword renderer registry, navigation, and dev tooling
 - Manages authentication (the single security boundary)
-- **Exposes an MCP server so AI agents can fully operate the system**
+- Exposes an MCP server so AI agents can fully operate the system
 
 It is intentionally boring infrastructure with no domain opinion. Every domain feature (inventory, costing, suppliers) lives in a module. The Shell just makes sure modules have what they need to run.
 
 **Two clients, one API:** The Shell has exactly two consumers — the React frontend (for humans) and the MCP server (for AI agents). Both hit the same FastAPI backend. There is no separate "AI API" — the REST API is designed to be complete enough that either client can do everything.
 
-**Previous project:** HideSync (leatherwork-specific ERP). Abandoned due to deep technical debt from an encryption layer that permeated the backend. Makestack is the architecturally clean successor.
-
-**Companion repo:** makestack-core (Go 1.24, single binary) — the headless catalogue engine. Manages JSON files in Git, maintains a SQLite read index, serves data via REST API. Core is already feature-complete for v0. Binary name: `makestack-core`. Default port: 8420. Default DB: in-memory (rebuilt from Git on startup). Writes auto-commit to Git; file watcher updates index async (~200ms).
+**Companion repo:** makestack-core (Go 1.24, single binary) — the headless catalogue engine. Manages JSON files in Git, maintains a SQLite read index, serves data via REST API. Core is already feature-complete for v0. Binary name: `makestack-core`. Default port: 8420.
 
 ---
 
 ## Architecture
 
-Three named layers + two access paths:
-
-- **Catalogue** = makestack-core (separate repo, feature-complete). Impersonal, canonical knowledge. No user state, no ownership.
-- **Shell** = This repo (makestack-app). Host application: React frontend + Python/FastAPI backend. Owns UserDB, module registry, auth, routing, keyword renderers, theme system.
-- **Inventory** = A concept within the Shell's UserDB, extended by modules. A user's personal relationship to the catalogue (what they own, how much, what they paid). References catalogue entries via immutable Git commit hashes, never copies them.
-
 ```
-┌─────────────────────────────────┐
-│   SEPARATE REPO: CORE (Go)     │
-│   = THE CATALOGUE               │
-│                                 │
-│   Impersonal documented knowledge│
-│   Already built. Feature-complete│
-│   Default: localhost:8420       │
-│                                 │
-│   Run: makestack-core           │
-│     -data <path-to-git-repo>    │
-│     -addr :8420                 │
-│     -db :memory: (or file path) │
-│     -api-key <key>              │
-│     --public-reads              │
-└───────────────────┬─────────────┘
-                    │ REST API (JSON over HTTP)
-                    │ (Shell is the ONLY client)
-┌───────────────────▼─────────────────────────────────────┐
-│   THIS REPO: SHELL                                      │
-│                                                         │
-│   ┌──────────────────────────────────────────────┐      │
-│   │          FastAPI Backend                      │      │
-│   │                                              │      │
-│   │   Catalogue proxy (to Core)                  │      │
-│   │   UserDB (SQLite — inventory, workshops)     │      │
-│   │   Module system (routers, SDK, migrations)   │      │
-│   │   Settings, auth, health checks              │      │
-│   │                                              │      │
-│   │   ALL operations available as REST endpoints │      │
-│   │   No UI-only operations exist                │      │
-│   └──────┬──────────────────────┬────────────────┘      │
-│          │                      │                        │
-│    ┌─────▼──────┐       ┌──────▼──────┐                 │
-│    │   React    │       │  MCP Server │                  │
-│    │  Frontend  │       │  (SSE/stdio)│                  │
-│    │            │       │             │                  │
-│    │  For humans│       │  For AI     │                  │
-│    │  Theme,    │       │  agents     │                  │
-│    │  keywords, │       │             │                  │
-│    │  visual UI │       │  Same ops,  │                  │
-│    └────────────┘       │  structured │                  │
-│                         │  tool calls │                  │
-│                         └─────────────┘                  │
-└─────────────────────────────────────────────────────────┘
+makestack-core  (Go, port 8420)
+    Impersonal, canonical knowledge
+    Git-backed, headless
+         │
+         │ REST API (Shell is the only client)
+         │
+makestack-shell  (Python/FastAPI, port 3000)
+    ├── FastAPI backend
+    │     Catalogue proxy ─── Core API
+    │     UserDB (SQLite)     Inventory, workshops, settings, users
+    │     Module system       Routes, migrations, SDK
+    │     Package manager     Git-native registry
+    │     MCP action log      Audit trail for AI operations
+    │     Terminal/log SSE    Live log streaming
+    │     Backup system       Automated + manual UserDB backups
+    │
+    ├── React frontend        Human UI
+    └── MCP server            AI agent interface (SSE + stdio)
 ```
 
 **Rules:**
 - The Shell is the only client of Core; modules never talk to Core directly
 - The catalogue never knows about the user
-- The inventory never stores what the catalogue already knows — it stores hash-pointer references
+- The inventory stores hash-pointer references, never copies catalogue data
 - Uninstall every module → the Shell still works (catalogue browsing, search, edit, workshops)
-- The Shell has no domain opinion — it doesn't know what leatherworking, costing, or inventory tracking is
-- **Every Shell operation must be reachable via REST API** — no operation should require the frontend
-- **The MCP server wraps the REST API** — it doesn't bypass it or talk to UserDB directly
+- The Shell has no domain opinion
+- Every Shell operation must be reachable via REST API — no operation requires the frontend
+- The MCP server wraps the REST API — it doesn't bypass it or talk to UserDB directly
 
 ---
 
-## MCP Integration (Core Design Principle)
-
-### Why MCP Is Foundational, Not a Feature
-
-Makestack is built for makers who use AI as a collaborator. The MCP server is not an add-on — it is a first-class access path, equivalent to the React frontend. Every feature built for the UI must also be accessible via MCP.
-
-### MCP Tool Inventory
-
-**Catalogue**
-- `search_catalogue` — full-text search across the catalogue
-- `browse_catalogue` — list primitives by type with filtering
-- `get_primitive` — read a single primitive with full keyword resolution
-- `create_primitive` — create a new catalogue entry
-- `update_primitive` — edit an existing entry
-- `delete_primitive` — remove an entry
-- `get_primitive_hash` — get the last-modified-commit hash for inventory pinning
-
-**Inventory**
-- `list_inventory` — list all inventory items with resolved catalogue data
-- `add_to_inventory` — create an inventory record pointing to a catalogue entry
-- `get_inventory_item` — read an inventory item with resolved catalogue data
-- `check_inventory_updates` — which inventory items have newer catalogue versions available
-- `update_inventory_pointer` — update an inventory item's hash to the latest catalogue version
-
-**Workshops**
-- `list_workshops` — list all workshops
-- `create_workshop` — create a new workshop
-- `set_active_workshop` — switch the active organizational context
-- `add_to_workshop` — assign a primitive to a workshop
-- `remove_from_workshop` — remove a primitive reference from a workshop
-
-**Modules**
-- `list_modules` — list installed modules with status
-- `call_module` — invoke a module's API endpoint (generic passthrough)
-- `get_module_data` — read data from a module's tables (via the module's own API)
-- `enable_module` / `disable_module` — toggle modules on/off
-
-**Packages / Registry**
-- `install_package` — install a module, widget pack, catalogue, or data pack by name or URL
-- `uninstall_package` — uninstall a package
-- `search_packages` — search across all registries
-- `list_packages` — list all installed packages with types and versions
-- `list_registries` — list configured registries
-
-**Settings**
-- `get_settings` — read current preferences and config
-- `update_settings` — change preferences
-
-**System**
-- `get_status` — Shell health, Core connection state, loaded modules
-- `get_capabilities` — list all available operations (self-describing)
-
-### Design Rules for MCP Compatibility
-
-These rules apply to ALL Shell development, not just the MCP server itself:
-
-1. **No UI-only operations.** Every action the React frontend can perform must have a corresponding REST endpoint. If you're building a UI feature, build the API endpoint first, then build the UI that calls it.
-
-2. **Structured responses everywhere.** Every API endpoint returns typed JSON (Pydantic models). No HTML fragments, no rendered templates, no bare strings. The AI needs to parse and reason about the response.
-
-3. **Descriptive error messages.** API errors must include enough context for an AI to understand what went wrong and how to fix it. `{"error": "not found"}` is insufficient. `{"error": "Primitive not found", "path": "materials/wickett-craig-5oz/manifest.json", "suggestion": "Use search_catalogue to find the correct path"}` is useful.
-
-4. **Pagination with metadata.** List endpoints return `{"items": [...], "total": N, "limit": 50, "offset": 0}` — the AI needs to know if there are more results.
-
-5. **Idempotent operations where possible.** Creating a technique that already exists should either return the existing one or return a clear conflict error, not silently duplicate.
-
-6. **Self-describing API.** `GET /api/capabilities` returns a machine-readable description of all available operations, their parameters, and their return types. The MCP tool list is generated from this.
-
-7. **Module operations exposed generically.** The Shell doesn't hardcode MCP tools per module. Instead, it provides a generic `call_module` tool that can invoke any module's registered API endpoints. Module manifests already declare their endpoints — the MCP server reads these declarations to describe available module operations to the AI.
-
-### MCP Transport
-
-The MCP server supports two transports:
-
-- **SSE (Server-Sent Events):** For remote/network access. The Shell serves the MCP SSE endpoint alongside the REST API. This is how Claude.ai MCP connectors would connect.
-- **stdio:** For local development. `makestack mcp` runs the MCP server on stdin/stdout for direct process-level integration with Claude Code or other local AI tools.
-
-```bash
-# Remote: SSE transport (served by Shell alongside REST API)
-# Available at http://localhost:3000/mcp/sse
-
-# Local: stdio transport (for Claude Code, etc.)
-makestack mcp
-```
-
-### Module MCP Exposure
-
-When a module is installed, its API endpoints become available through MCP automatically:
-
-1. Module manifest declares its API endpoints with descriptions and parameter schemas
-2. Shell's module loader reads these declarations at startup
-3. MCP server generates tool definitions from module endpoint declarations
-4. AI agent sees module tools alongside Shell tools — no distinction needed
-
-Example: If the inventory-stock module is installed and declares `GET /stock/{material_path}`, the MCP server exposes a tool `inventory_stock__get_stock` that the AI can call.
-
-Module tool naming convention: `{module_name}__{endpoint_name}` (double underscore separator).
-
----
-
-## Tech Stack (This Repo)
+## Tech Stack
 
 ### Backend
-- **Language:** Python 3.12+
+- **Language:** Python 3.10+ (system has 3.10; pyproject.toml says >=3.10)
 - **Framework:** FastAPI (async)
 - **HTTP client:** httpx (async, for Core communication)
 - **Database:** SQLite via aiosqlite (UserDB — local personal state)
 - **Validation:** Pydantic 2.x
-- **Logging:** structlog (tagged, structured)
-- **Testing:** pytest + pytest-asyncio
-- **Module SDK:** `makestack-sdk` package (provided by this repo, consumed by modules)
+- **Logging:** structlog (tagged, structured, with SSE broadcast)
+- **Testing:** pytest + pytest-asyncio (474 tests)
+- **Module SDK:** `makestack_sdk` package (provided by this repo, consumed by modules)
 - **MCP server:** `mcp` Python SDK (SSE + stdio transports)
+- **CLI:** Click
 
 ### Frontend
-- **Framework:** React 18+
-- **Routing:** TanStack Router (file-based routes)
-- **Data fetching:** TanStack Query
-- **Styling:** Tailwind CSS (config-driven from theme JSON)
-- **Components:** Radix UI primitives wrapped in `@makestack/ui`
+- **Framework:** React 19 + TypeScript (strict mode)
+- **Routing:** TanStack Router v1 (code-based routes in `router.tsx`)
+- **Data fetching:** TanStack Query v5
+- **Styling:** Tailwind CSS v4 (inline `@theme`, CSS vars `--ms-*`)
+- **Components:** Radix UI primitives wrapped in `src/components/ui/`
 - **Icons:** Lucide React
-- **Charts:** Recharts
-- **Build:** Vite
-- **Primary font:** Lexend (dyslexia-friendly, research-backed readability)
-- **Mono font:** JetBrains Mono (distinct characters for measurements/data)
+- **Build:** Vite 7
+- **Primary font:** Lexend (dyslexia-friendly)
+- **Mono font:** JetBrains Mono (measurements/data)
 
 ### Infra
-- **Container:** Docker + docker-compose (runs Core + Shell together)
-- **CLI:** Click or Typer (for `makestack` command)
+- **Container:** Docker + docker-compose (Core + Shell together)
+- **Production deployment:** Hetzner CX21 + Cloudflare Tunnel (see HETZNER.md)
+- **CLI entry point:** `makestack = "cli.main:app"`
 
 ---
 
-## Core API Reference (What This Shell Consumes)
+## Directory Layout (Repo)
 
-Core is already running and feature-complete. The Shell is Core's ONLY client.
+```
+makestack-shell/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                  # FastAPI app, lifespan, startup sequence
+│   │   ├── constants.py             # SHELL_VERSION = "0.1.0"
+│   │   ├── core_client.py           # CatalogueClient with LRU cache
+│   │   ├── userdb.py                # Async SQLite wrapper + migration runner
+│   │   ├── models.py                # All Pydantic models (30+ types)
+│   │   ├── dependencies.py          # FastAPI DI providers
+│   │   ├── module_loader.py         # Module discovery, validation, mounting
+│   │   ├── module_manifest.py       # ModuleManifest Pydantic schema
+│   │   ├── package_manifest.py      # PackageManifest schema (makestack-package.json)
+│   │   ├── registry_client.py       # Git-based registry resolver
+│   │   ├── package_cache.py         # Local package cache manager
+│   │   ├── log_broadcast.py         # SSE log fan-out broadcaster
+│   │   ├── routers/                 # 14 FastAPI routers
+│   │   │   ├── catalogue.py         # Core proxy
+│   │   │   ├── inventory.py         # Hash-pointer inventory
+│   │   │   ├── workshops.py         # Workshop CRUD + members + modules + nav
+│   │   │   ├── settings.py          # Preferences + theme
+│   │   │   ├── users.py             # User profile + stats
+│   │   │   ├── version.py           # History + diff
+│   │   │   ├── modules.py           # Module management
+│   │   │   ├── packages.py          # Package install/uninstall + registries
+│   │   │   ├── system.py            # Status + capabilities
+│   │   │   ├── data.py              # Export/import
+│   │   │   ├── backups.py           # UserDB backup management
+│   │   │   ├── terminal.py          # Terminal + log stream (SSE + WebSocket)
+│   │   │   ├── mcp_log.py           # MCP action audit log
+│   │   │   └── dev.py               # Dev-only debugging
+│   │   ├── migrations/              # 7 numbered SQL migrations
+│   │   │   ├── 001_initial_schema.py
+│   │   │   ├── 002_add_package_path.py
+│   │   │   ├── 003_add_registry_tables.py
+│   │   │   ├── 004_user_profile.py
+│   │   │   ├── 005_mcp_action_log.py
+│   │   │   ├── 006_workshop_modules.py
+│   │   │   └── 007_install_transactions.py
+│   │   └── installers/              # Package installer handlers
+│   │       ├── base.py              # InstallResult dataclass
+│   │       ├── module_installer.py
+│   │       ├── widget_installer.py
+│   │       ├── catalogue_installer.py
+│   │       ├── data_installer.py
+│   │       └── skill_installer.py
+│   ├── sdk/                         # Module SDK implementation
+│   │   ├── __init__.py
+│   │   ├── catalogue_client.py
+│   │   ├── userdb.py
+│   │   ├── config.py
+│   │   ├── context.py
+│   │   ├── peers.py
+│   │   ├── logger.py
+│   │   └── testing.py
+│   ├── tests/                       # 23 test files, 474 tests
+│   │   ├── conftest.py
+│   │   ├── test_*.py
+│   │   └── fixtures/                # Broken/invalid modules for error testing
+│   └── requirements.txt
+├── mcp_server/
+│   ├── server.py                    # MCP server factory (_LoggingFastMCP)
+│   ├── transport.py                 # SSE + stdio transport setup
+│   ├── tool_generator.py            # Auto-generates tools from module manifests
+│   ├── __main__.py                  # stdio entry point
+│   └── tools/                       # 10 tool groups, 40+ tools
+│       ├── catalogue.py             # 7 tools
+│       ├── inventory.py             # 6 tools
+│       ├── workshops.py             # 8 tools
+│       ├── version.py               # 3 tools
+│       ├── settings.py              # 4 tools
+│       ├── modules.py               # 12 tools
+│       ├── data.py                  # 2 tools
+│       ├── system.py                # 2 tools
+│       ├── mcp_log.py               # 2 tools
+│       └── users.py                 # 3 tools
+├── frontend/
+│   ├── src/
+│   │   ├── main.tsx                 # Entry: QueryClient, theme, module registration
+│   │   ├── App.tsx                  # RouterProvider wrapper
+│   │   ├── router.tsx               # All routes (TanStack Router, code-based)
+│   │   ├── index.css                # Tailwind v4 @theme, CSS vars, base styles
+│   │   ├── components/
+│   │   │   ├── ui/                  # Radix wrappers (Button, Card, Dialog, etc.)
+│   │   │   ├── keywords/            # Core keyword widgets (7 types)
+│   │   │   ├── version/             # Timeline, diff, badge, compare
+│   │   │   ├── layout/              # Layout, Sidebar, Header, BottomPanel
+│   │   │   └── catalogue/           # Card, form, property/step renderers
+│   │   ├── hooks/                   # TanStack Query hooks per domain
+│   │   ├── context/                 # WorkshopContext (global active workshop)
+│   │   ├── theme/                   # Theme loader + token types
+│   │   ├── modules/                 # View/panel/keyword registries
+│   │   │   ├── registry.ts          # Auto-generated at build time
+│   │   │   ├── view-registry.ts     # Pattern-based route matching
+│   │   │   ├── panel-registry.ts    # Panel component registry
+│   │   │   └── keyword-resolver.ts  # 3-layer keyword resolution
+│   │   ├── routes/                  # Route page components
+│   │   └── lib/                     # api.ts, types.ts, utils.ts
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── tsconfig.json
+├── cli/
+│   ├── main.py                      # Click CLI (40+ commands)
+│   └── commands/
+│       ├── mcp.py                   # MCP stdio entry
+│       └── data.py                  # Export/import CLI
+├── makestack_sdk/                   # Thin re-export layer for module authors
+├── Dockerfile                       # Multi-stage: Node build → Python runtime
+├── docker-compose.yml               # Core + Shell full-stack
+├── docker-compose.dev.yml           # Dev override with hot-reload
+├── docker-compose.hetzner.yml       # Hetzner + Cloudflare Tunnel production
+├── HETZNER.md                       # Production deployment guide
+├── pyproject.toml                   # Python packaging + deps
+├── CLAUDE.md                        # This file
+├── LICENSE                          # Proprietary (All Rights Reserved)
+└── README.md
+```
 
-**Core connection:** `http://localhost:8420` (configurable, default port 8420)
+---
 
-**Auth:** `Authorization: Bearer <key>` or `X-API-Key: <key>` header. If Core is started with `--public-reads`, GET endpoints are open; writes still require the key. If no key is configured, Core logs a warning and runs open.
+## Directory Layout (Runtime)
 
-**Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Always public. Returns `{"status":"ok"}` |
-| GET | `/primitives/{type}` | List primitives of a type (tools/materials/techniques/workflows/projects/events) |
-| GET | `/primitives/{type}/{path...}/manifest.json` | Read a primitive |
-| POST | `/primitives/{type}/{path...}/manifest.json` | Create a primitive |
-| PUT | `/primitives/{type}/{path...}/manifest.json` | Update a primitive |
-| DELETE | `/primitives/{type}/{path...}/manifest.json` | Delete a primitive |
-| GET | `/primitives/{type}/{path...}/hash` | Last-modified-commit hash for this path |
-| GET | `/search?q=&type=&limit=&offset=` | Full-text search |
-| GET | `/primitives/{type}/{path...}/manifest.json?at={hash}` | Version-specific read |
-| GET | `/history/{type}/{path...}/manifest.json` | Commit history for a path |
-| GET | `/diff/{type}/{path...}/manifest.json?from={hash}&to={hash}` | Structured diff |
-| GET | `/config` | Active config from `.makestack/config.json` |
-| GET | `/themes` | List available themes |
-| GET | `/themes/{name}` | Read a theme JSON |
-
-**Key implementation notes:**
-- Core speaks JSON over HTTP — no gRPC, no GraphQL
-- All write operations auto-commit to Git
-- File watcher updates index async after commits (~200ms lag)
-- `?at={hash}` reads directly from Git object store, bypassing SQLite
-- `/hash` returns the last-modified-commit hash for that specific path (NOT repo HEAD)
-- Version-specific reads return 503 when the writer is nil
+```
+~/.makestack/                    # Shell's local state (not in Git)
+├── userdb.sqlite                # UserDB — all personal state
+├── cache/                       # Catalogue proxy cache
+├── packages/                    # Package cache (cloned Git repos)
+│   ├── modules/
+│   ├── widgets/
+│   ├── catalogues/
+│   └── data/
+├── registries/                  # Cloned registry repos
+├── backups/                     # UserDB backups (auto + manual)
+└── logs/                        # Log files (production mode)
+```
 
 ---
 
 ## Shell API Reference
 
-### Catalogue (Proxy)
+### Catalogue (Proxy to Core)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/catalogue/{type}` | List primitives (proxied + cached) |
-| GET | `/api/catalogue/{type}/{path...}` | Read primitive (proxied + cached) |
-| POST | `/api/catalogue/{type}/{path...}` | Create primitive (proxied, clears cache) |
-| PUT | `/api/catalogue/{type}/{path...}` | Update primitive (proxied, clears cache) |
-| DELETE | `/api/catalogue/{type}/{path...}` | Delete primitive (proxied, clears cache) |
-| GET | `/api/catalogue/search` | Search (proxied) |
-| GET | `/api/catalogue/{type}/{path...}/history` | Version history (proxied) |
-| GET | `/api/catalogue/{type}/{path...}/diff` | Diff two versions (proxied) |
+| GET | `/api/catalogue/primitives` | List primitives (type-filtered) |
+| GET | `/api/catalogue/search` | Full-text search |
+| GET | `/api/catalogue/primitives/{path...}` | Read primitive |
+| POST | `/api/catalogue/primitives/{path...}` | Create primitive |
+| PUT | `/api/catalogue/primitives/{path...}` | Update primitive |
+| DELETE | `/api/catalogue/primitives/{path...}` | Delete primitive |
+| GET | `/api/catalogue/{path...}/history` | Version history |
+| GET | `/api/catalogue/{path...}/diff` | Diff two versions |
+| GET | `/api/catalogue/relationships/{path...}` | Cross-references |
 
 ### Inventory
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/inventory` | List all inventory items |
 | POST | `/api/inventory` | Add item (creates hash-pointer) |
+| GET | `/api/inventory/stale` | Items with newer catalogue versions |
 | GET | `/api/inventory/{id}` | Read item with resolved catalogue data |
 | PUT | `/api/inventory/{id}` | Update item |
 | DELETE | `/api/inventory/{id}` | Remove item |
-| POST | `/api/inventory/{id}/update-pointer` | Update hash to latest catalogue version |
-| GET | `/api/inventory/stale` | List items with newer catalogue versions |
+| GET | `/api/inventory/{id}/update-pointer` | Update hash to latest |
 
 ### Workshops
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/workshops` | List workshops |
 | POST | `/api/workshops` | Create workshop |
-| GET | `/api/workshops/{id}` | Read workshop |
+| GET | `/api/workshops/{id}` | Read workshop with members |
 | PUT | `/api/workshops/{id}` | Update workshop |
 | DELETE | `/api/workshops/{id}` | Delete workshop |
+| POST | `/api/workshops/active` | Set active workshop |
 | POST | `/api/workshops/{id}/members` | Add member |
 | DELETE | `/api/workshops/{id}/members/{ref}` | Remove member |
-| POST | `/api/workshops/active` | Set active workshop |
+| GET | `/api/workshops/{id}/nav` | Workshop navigation items |
+| POST | `/api/workshops/{id}/modules` | Assign module to workshop |
+
+### Users
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/users/me` | Read user profile |
+| PUT | `/api/users/me` | Update user profile |
+| GET | `/api/users/me/stats` | Activity summary |
 
 ### Settings
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/settings` | Read user preferences |
-| PUT | `/api/settings` | Update preferences |
+| GET | `/api/settings` | Read preferences |
+| PUT | `/api/settings/preferences` | Update preferences |
 | GET | `/api/settings/theme` | Current theme name |
 | PUT | `/api/settings/theme` | Set active theme |
-| GET | `/api/settings/theme/data` | CSS variable map for active theme |
 
 ### Modules
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/modules` | List installed modules |
-| POST | `/api/modules/{name}/enable` | Enable a module |
-| POST | `/api/modules/{name}/disable` | Disable a module |
+| PUT | `/api/modules/{name}/enable` | Enable a module |
+| PUT | `/api/modules/{name}/disable` | Disable a module |
+| GET | `/api/modules/{name}/views` | Module view registrations |
 | ANY | `/modules/{name}/{path...}` | Module-owned routes |
 
-### Packages / Registry
+### Packages & Registries
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/packages` | List installed packages |
 | POST | `/api/packages/install` | Install a package |
-| DELETE | `/api/packages/{name}` | Uninstall a package |
-| POST | `/api/packages/{name}/update` | Update a package to latest version |
-| GET | `/api/packages/search?q=` | Search across all registries |
+| POST | `/api/packages/uninstall` | Uninstall a package |
+| POST | `/api/packages/{name}/update` | Update a package |
+| GET | `/api/packages/search` | Search across registries |
+| GET | `/api/packages/repair` | Recover from interrupted installs |
 | GET | `/api/registries` | List configured registries |
 | POST | `/api/registries` | Add a registry |
 | DELETE | `/api/registries/{name}` | Remove a registry |
@@ -343,8 +324,28 @@ Core is already running and feature-complete. The Shell is Core's ONLY client.
 ### Data (Export / Import)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/data/export` | Export UserDB as portable JSON |
-| POST | `/api/data/import` | Import UserDB JSON (additive / overwrite / skip_conflicts) |
+| POST | `/api/data/export` | Export UserDB as portable JSON |
+| POST | `/api/data/import` | Import UserDB JSON |
+
+### Backups
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/backups` | List available backups |
+| GET | `/api/backups/{id}` | Get backup details |
+| POST | `/api/backups/restore/{id}` | Restore from backup |
+| DELETE | `/api/backups/{id}` | Delete a backup |
+
+### Terminal & Logs
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/terminal/logs` | SSE log stream |
+| WS | `/api/terminal/ws` | WebSocket log stream |
+
+### MCP Action Log
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/mcp-log` | Paginated action audit log |
+| POST | `/api/mcp-log` | Record an action |
 
 ### System
 | Method | Endpoint | Description |
@@ -352,18 +353,49 @@ Core is already running and feature-complete. The Shell is Core's ONLY client.
 | GET | `/api/status` | Shell health, Core connection, module states |
 | GET | `/api/capabilities` | Machine-readable list of all operations |
 
+### Version
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/version/{path}/history` | Primitive version timeline |
+| GET | `/api/version/{path}/diff` | Structured field-level diff |
+
 ### Dev (dev mode only)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/dev/modules` | Module debug info |
 | GET | `/api/dev/keywords` | Keyword renderer registry |
-| GET | `/api/dev/catalogue-proxy` | Recent Core API calls + cache stats |
+| GET | `/api/dev/catalogue-proxy` | Core API calls + cache stats |
 | GET | `/api/dev/userdb/tables` | UserDB table info |
-| GET | `/api/dev/userdb/query?sql=` | Read-only SQL (dev only) |
-| GET | `/api/dev/config` | Resolved config |
 | POST | `/api/dev/validate-module` | Validate module manifest |
-| GET | `/api/dev/health` | Full system health |
 | POST | `/api/dev/error` | Frontend error reporting |
+
+---
+
+## MCP Server
+
+### Tool Inventory (40+ tools across 10 groups)
+
+| Group | Count | Tools |
+|-------|-------|-------|
+| Catalogue | 7 | `search_catalogue`, `list_primitives`, `get_primitive`, `create_primitive`, `update_primitive`, `delete_primitive`, `get_relationships` |
+| Inventory | 6 | `add_to_inventory`, `list_inventory`, `get_inventory_item`, `check_inventory_updates`, `update_inventory_pointer`, `remove_from_inventory` |
+| Workshops | 8 | `list_workshops`, `get_workshop`, `create_workshop`, `update_workshop`, `delete_workshop`, `add_to_workshop`, `remove_from_workshop`, `set_active_workshop` |
+| Version | 3 | `get_primitive_history`, `compare_versions`, `get_primitive_at_version` |
+| Settings | 4 | `get_settings`, `update_settings`, `get_theme`, `set_theme` |
+| Modules | 12 | `list_modules`, `enable_module`, `disable_module`, `list_packages`, `install_package`, `uninstall_package`, `update_package`, `search_packages`, `list_registries`, `add_registry`, `remove_registry`, `refresh_registries` |
+| Data | 2 | `export_data`, `import_data` |
+| System | 2 | `get_status`, `get_capabilities` |
+| Users | 3 | `get_user_profile`, `update_user_profile`, `get_user_stats` |
+| MCP Log | 2 | `list_mcp_actions`, `get_daily_summary` |
+
+Module API endpoints are automatically exposed as MCP tools via `tool_generator.py` — no hardcoding per module. Tool naming: `{module_name}__{endpoint_name}`.
+
+### Transport
+- **SSE:** Mounted at `/mcp` in FastAPI, available at `/mcp/sse`
+- **stdio:** `python -m mcp_server` or `makestack mcp`
+
+### MCP Logging
+`_LoggingFastMCP` subclass wraps all tool calls, logs to `/api/mcp-log` (tool_name, args, status, affected_paths, session_id). Non-blocking — never breaks tool execution.
 
 ---
 
@@ -377,175 +409,89 @@ Core is already running and feature-complete. The Shell is Core's ONLY client.
 | Material | Consumable inputs |
 | Technique | Methods and skills |
 | Workflow | Ordered sequences of techniques |
-| Project | Concrete instances of making (recursive via `parent_project`) |
+| Project | Concrete instances of making |
 | Event | Time-bound occurrences within projects |
 
-### UserDB (This repo's SQLite — personal state)
+### UserDB Schema (7 migrations)
 
-The Shell owns a local SQLite database at `~/.makestack/userdb.sqlite`. It stores everything personal — things Core doesn't know about.
+**Migration 001 — Core tables:**
+- `users` (id, name, avatar_path, created_at, updated_at)
+- `user_preferences` (user_id FK, key, value JSON)
+- `workshops` (id, name, slug UNIQUE, description, icon, color, sort_order)
+- `workshop_members` (workshop_id FK, primitive_path, primitive_type)
+- `inventory` (id, catalogue_path, catalogue_hash, primitive_type, workshop_id FK)
+- `installed_modules` (name PK, version, enabled, last_migration)
+- `module_migrations` (module_name FK, migration_id)
 
-**Core tables (Shell-owned):**
+**Migration 002** — `installed_modules.package_path TEXT` (local dev override)
 
-```sql
-inventory_items
-  id TEXT PRIMARY KEY
-  catalogue_path TEXT NOT NULL        -- e.g. "materials/wickett-craig-5oz"
-  catalogue_hash TEXT NOT NULL        -- Git commit hash (immutable pointer)
-  quantity REAL
-  unit TEXT
-  notes TEXT
-  meta JSON                           -- namespace-scoped module data
-  created_at TEXT
-  updated_at TEXT
+**Migration 003** — Registry tables:
+- `installed_registries` (name PK, git_url, added_at, last_refreshed)
+- `installed_packages` (name PK, type, version, git_url, package_path, registry_name)
 
-workshops
-  id TEXT PRIMARY KEY
-  name TEXT NOT NULL
-  description TEXT
-  is_active INTEGER DEFAULT 0
-  created_at TEXT
+**Migration 004** — User profile fields: `users.bio`, `users.timezone`, `users.locale`
 
-workshop_members
-  workshop_id TEXT REFERENCES workshops(id)
-  ref_type TEXT                       -- "catalogue" | "inventory"
-  ref_path TEXT
-  added_at TEXT
+**Migration 005** — MCP action log:
+- `mcp_action_log` (id, timestamp, tool_name, tool_args JSON, result_status, result_summary, affected_paths JSON, session_id, day)
 
-installed_modules
-  name TEXT PRIMARY KEY
-  version TEXT
-  enabled INTEGER DEFAULT 1
-  package_path TEXT                   -- local dev override
-  installed_at TEXT
+**Migration 006** — Workshop-module associations:
+- `workshop_modules` (workshop_id FK, module_name, sort_order, enabled)
 
-module_migrations
-  module_name TEXT
-  migration_id TEXT
-  applied_at TEXT
-
-user_preferences
-  key TEXT PRIMARY KEY
-  value JSON
-
-registries
-  name TEXT PRIMARY KEY
-  url TEXT NOT NULL
-  last_refreshed TEXT
-
-installed_packages
-  name TEXT PRIMARY KEY
-  type TEXT                           -- module | widget-pack | catalogue | data
-  version TEXT
-  source_url TEXT
-  installed_at TEXT
-```
-
-**Module tables** are defined by each module's migrations and are prefixed with the module name (e.g., `inventory_stock_entries`).
+**Migration 007** — Install transactions (rollback tracking):
+- `install_transactions` (id, package_name, package_version, package_type, status, steps_completed JSON, failed_step, backup_path)
 
 ### Hash-Pointer Model
 
-Inventory items reference catalogue entries via Git commit hashes, not by path alone:
-
+Inventory items reference catalogue entries via Git commit hashes:
 ```
-inventory_item.catalogue_path = "materials/wickett-craig-5oz"
-inventory_item.catalogue_hash = "a3f8c1d..."   ← specific version
+inventory.catalogue_path = "materials/wickett-craig-5oz"
+inventory.catalogue_hash = "a3f8c1d..."   ← immutable pointer to specific version
 ```
-
-This means:
-- Inventory always knows exactly which version of a catalogue entry it was built against
-- The catalogue can evolve without silently breaking inventory records
-- The Shell can detect when a catalogue entry has been updated since it was added to inventory
-- Version-specific reads (`?at={hash}`) let the Shell show the entry as it was at that hash
 
 ---
 
-## Extensibility: Widgets, Modules, and Registry
+## Module System
 
-The Shell has three extension mechanisms, each with a different weight and purpose. Understanding the separation is critical — they are NOT the same thing.
+### Module Loading Sequence
+1. Read `installed_modules` table
+2. Resolve manifest.json (from `package_path` or Python package)
+3. Validate `ModuleManifest`
+4. Run pending UserDB migrations
+5. Import backend router
+6. Mount router at `/modules/{name}/`
+7. Register keywords, views, panels, endpoints in ModuleRegistry
 
-### 1. Widgets (Frontend-Only Keyword Renderers)
+### Module Manifest Fields
+- `name`, `display_name`, `version`, `shell_compatibility`
+- `has_backend`, `has_frontend`
+- `keywords[]`, `api_endpoints[]`, `views[]`, `panels[]`
+- `userdb_tables[]`, `dependencies`, `peer_modules`
+- `core_api_permissions[]`, `config_defaults`
+- `replaces_shell_view` — only "inventory", "workshops", or "catalogue"
 
-Widgets are **stateless, frontend-only components** invoked by JSON keywords. When a manifest contains a keyword like `TIMER_: "10min"`, the Shell's keyword renderer detects it and instantiates the corresponding widget.
-
-**Key properties:**
-- Pure React components — no Python backend, no API routes, no UserDB tables
-- No installation infrastructure — they are present at frontend build time
-- Stateless — they receive a keyword value and render it, nothing more
-- Degrade gracefully — if the renderer is absent, the raw JSON value displays as text
-- The data is already meaningful without the widget — widgets are UI enhancement, not data
-
-**Widgets come from three sources:**
-- **Core widgets** — shipped with the Shell (TIMER_, MEASUREMENT_, MATERIAL_REF_, etc.)
-- **Widget packs** — installable bundles of keyword renderers (via the registry)
-- **Module widgets** — keyword renderers registered by a full module as part of its frontend
-
-A widget pack is just a Git repo containing React components and a manifest declaring which keywords they render. Installing a widget pack triggers a frontend rebuild but does NOT require a Shell restart — no backend is involved.
-
-```
-makestack-widget-pack-timers/
-├── makestack-package.json       # type: "widget-pack", declares keywords
-├── components/
-│   ├── Timer.tsx                # Renders TIMER_
-│   ├── Countdown.tsx            # Renders COUNTDOWN_
-│   └── Stopwatch.tsx            # Renders STOPWATCH_
-└── index.ts                     # Exports keyword → component map
-```
-
-### 2. Modules (Full-Stack Extensions)
-
-Modules are **full-stack extensions** (Python backend + React frontend) that add domain features to the Shell. They are fundamentally heavier than widgets.
-
-**What modules can do that widgets cannot:**
-- Own backend API routes (mounted at `/modules/{name}/`)
-- Declare and migrate UserDB tables (personal data storage)
-- Access the catalogue via the SDK's CatalogueClient
-- Write to `meta` namespaces on catalogue primitives
-- Register panels, sidebar entries, and pages (not just keyword renderers)
-- Have configuration files (`.makestack/modules/{name}.config.json`)
-- Declare peer dependencies on other modules
-- Be invoked via MCP tools
-
-**Examples:** Inventory, Cost Tracker, CRM, Supplier Management, CNC Feeds & Speeds, Export Engine.
-
-A module CAN also register keyword renderers — but that's a module providing widgets as part of its larger feature set, not a standalone widget.
-
-**Module install flow:**
-1. Resolve via registry → Git URL → clone to package cache
-2. Dependency check (strict for Python, permissive for Node)
-3. Install Python dependencies
-4. Install Node dependencies (if has_frontend)
-5. Register in `installed_modules` table
-6. Run UserDB migrations
-7. Frontend rebuild (includes module's keyword renderers and panels)
-8. Shell restart required
-
-```
-makestack-module-inventory/
-├── makestack-package.json       # type: "module"
-├── manifest.json                # Module contract (keywords, endpoints, tables, permissions)
-├── backend/
-│   ├── __init__.py
-│   ├── routes.py                # FastAPI router
-│   ├── services.py
-│   └── migrations/
-│       └── 001_create_stock_table.py
-├── frontend/
-│   ├── components/
-│   │   └── StockBadge.tsx       # Keyword renderer (this is a widget provided BY a module)
-│   ├── keywords.ts
-│   └── index.ts
-└── tests/
+### SDK Surfaces (for module authors)
+```python
+from makestack_sdk import (
+    CatalogueClient, get_catalogue_client,    # Proxy to Core
+    ModuleUserDB, get_module_userdb_factory,   # Scoped table access
+    ShellContext, get_shell_context,           # user_id, workshop_id, version, dev_mode
+    ModuleConfig, get_module_config_factory,   # Config merging
+    PeerModules, get_peer_modules,             # Inter-module calls
+    get_logger,                                # Pre-tagged structlog
+    # Testing
+    MockCatalogueClient, MockUserDB,
+    MockShellContext, MockPeerModules,
+    create_test_app,
+)
 ```
 
-### 3. Registry / Package Manager (Git-Native)
+### Frontend Module System
+Three registries, all populated at startup via `registerAllModules()`:
+- **View registry** — pattern-based route matching, caught by router's `defaultNotFoundComponent`
+- **Panel registry** — panel components rendered on workshop home
+- **Keyword resolver** — 3-layer priority: module > pack > core
 
-The registry is a **Git-native package manager** built into the Shell. It is the mechanism by which Makestack proliferates — not an afterthought, but a core feature.
-
-**Two-level structure:**
-1. **Primary index** — a JSON file in the data repo (`.makestack/config.json` points to it) listing trusted registries
-2. **Registries** — Git repos containing `index.json` files that list packages with their Git URLs and metadata
-
-**Four installable package types:**
+### Package Types
 
 | Type | What it is | Restart? |
 |------|-----------|----------|
@@ -553,323 +499,187 @@ The registry is a **Git-native package manager** built into the Shell. It is the
 | `widget-pack` | Frontend-only keyword renderer bundle | No |
 | `catalogue` | Primitive data to merge into Core | No |
 | `data` | Themes, presets, or other static files | No |
+| `skill` | AI skill JSON definitions | No |
 
-**Package cache:** Cloned repos live in `~/.makestack/packages/`. Version switching and updates are done via Git operations on the cached clone.
-
----
-
-## Keywords and Widgets
-
-JSON manifests contain special keywords (uppercase, trailing underscore) that the Shell's keyword renderer resolves to **widgets** — stateless React components:
-
-```json
-{ "TIMER_": "30min" }        → renders countdown timer widget
-{ "MEASUREMENT_": "4mm" }    → renders measurement widget with unit conversion
-```
-
-**Three sources of keyword renderers (all are widgets):**
-- **Core widgets** (shipped with Shell): TIMER_, MEASUREMENT_, MATERIAL_REF_, TOOL_REF_, TECHNIQUE_REF_, IMAGE_, LINK_, NOTE_, CHECKLIST_
-- **Widget packs** (installed via registry): standalone frontend-only bundles, no backend
-- **Module widgets** (registered by modules): keyword renderers that are part of a full-stack module (e.g., INVENTORY_STOCK_ from the inventory module)
-
-**Resolution order:** Module widgets override widget pack widgets override core widgets (for the same keyword). Unknown keywords display as raw text (graceful degradation).
-
-**Detection:** regex `^[A-Z][A-Z0-9_]*_$` on JSON keys.
-
-See **03-JSON-KEYWORD-CONVENTION.md** for full spec.
+### Install Transaction Safety
+Migration 007 tracks install steps. On startup, the module loader checks for `status='in_progress'` rows and automatically rolls back partial installs.
 
 ---
 
-## Directory Layout (Runtime)
+## Frontend Architecture
 
-```
-~/.makestack/                    # Shell's local state (not in Git)
-├── userdb.sqlite                # UserDB — all personal state
-├── cache/                       # Catalogue proxy cache
-├── packages/                    # Package cache (cloned Git repos)
-│   ├── modules/
-│   │   └── inventory-stock/     # Cloned module repo
-│   ├── widgets/
-│   │   └── timer-widgets/       # Cloned widget pack repo
-│   └── catalogues/
-│       └── leatherwork/         # Cloned catalogue repo
-├── registries/                  # Cloned registry repos
-│   ├── official/
-│   └── community-leather/
-└── logs/                        # Log files (production mode)
+### Route Tree (TanStack Router, code-based in `router.tsx`)
+- `/` → redirects to `/catalogue`
+- `/catalogue` — type-filtered primitive list
+- `/catalogue/search` — full-text search results
+- `/catalogue/create` — create new primitive
+- `/catalogue/detail` — primitive detail view (path + optional at hash)
+- `/catalogue/edit` — edit primitive
+- `/inventory` — inventory list
+- `/inventory/detail` — inventory item detail
+- `/workshops` — workshop list
+- `/workshops/detail` — workshop detail
+- `/workshop/$id` — active workshop home (renders panels)
+- `/workshop/$id/settings` — workshop configuration
+- `/settings` — user preferences, theme switcher
+- `/packages` — package/module management
+- `/dev/keywords` — keyword widget docs (dev only)
+- `/dev/schema` — UserDB schema viewer (dev only)
+- `/dev/modules` — module debug info (dev only)
+- `/dev/docs` — API documentation (dev only)
+- Catch-all → `ModuleViewRenderer` (resolves against module view registry)
 
-<data-repo>/                     # Managed by Core (Git)
-├── .makestack/
-│   ├── config.json
-│   ├── themes/
-│   └── modules/
-├── materials/
-├── techniques/
-├── tools/
-├── workflows/
-├── projects/
-└── events/
+### Layout Structure
 ```
+<Layout>
+  <StaleBanner>           (dismissed when Core unreachable)
+  <Sidebar>               (w-52, workshop context, module nav, shell nav, dev tools)
+  <Header>                (breadcrumbs, search, workshop switcher, Core indicator)
+  <main>                  (route outlet)
+  <BottomPanel>           (resizable: Terminal tab, Log tab)
+</Layout>
+```
+
+### Key Patterns
+- `WorkshopContext` — global active workshop state, persists via backend
+- All navigate calls to `/catalogue/detail` require `at: undefined` explicitly
+- `erasableSyntaxOnly: true` — no parameter-shorthand class properties
+- `ModuleErrorBoundary` wraps untrusted module/pack keyword renderers
+- Bottom panel state saved to sessionStorage
+- `apiGet/apiPost/apiPut/apiDelete` in `lib/api.ts` — typed HTTP client
+- Dev tools section only shown when `dev_mode: true` from `/api/status`
+
+### Core Keyword Widgets
+`TIMER_`, `MEASUREMENT_`, `MATERIAL_REF_`, `TOOL_REF_`, `TECHNIQUE_REF_`, `IMAGE_`, `LINK_`, `NOTE_`, `CHECKLIST_`
 
 ---
 
-## Directory Layout (Repo)
+## Backend Architecture
 
-```
-makestack-app/
-├── backend/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── core_client.py
-│   │   ├── models.py
-│   │   ├── module_manifest.py
-│   │   ├── module_loader.py
-│   │   ├── routers/
-│   │   │   ├── catalogue.py
-│   │   │   ├── inventory.py
-│   │   │   ├── workshops.py
-│   │   │   ├── settings.py
-│   │   │   ├── modules.py
-│   │   │   ├── packages.py
-│   │   │   ├── data.py
-│   │   │   ├── system.py
-│   │   │   └── dev.py
-│   │   └── migrations/
-│   │       ├── 001_initial_schema.py
-│   │       └── ...
-│   ├── sdk/                          # makestack-sdk package (consumed by modules)
-│   │   ├── __init__.py
-│   │   ├── catalogue_client.py
-│   │   ├── userdb.py
-│   │   ├── config.py
-│   │   ├── context.py
-│   │   ├── peers.py
-│   │   ├── logger.py
-│   │   └── testing.py
-│   ├── requirements.txt
-│   └── tests/
-├── mcp_server/
-│   ├── __init__.py
-│   ├── server.py                     # MCP server (tool definitions + handlers)
-│   ├── tools/
-│   │   ├── catalogue.py
-│   │   ├── inventory.py
-│   │   ├── workshops.py
-│   │   ├── modules.py
-│   │   ├── version.py
-│   │   ├── settings.py
-│   │   ├── data.py
-│   │   └── system.py
-│   ├── transport.py                  # SSE + stdio transport setup
-│   └── tool_generator.py            # Auto-generates tool defs from module manifests
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── main.tsx
-│   │   ├── routes/
-│   │   ├── components/
-│   │   │   ├── primitives/
-│   │   │   ├── keywords/
-│   │   │   ├── version/
-│   │   │   ├── layout/
-│   │   │   └── ui/                   # @makestack/ui (Radix wrappers)
-│   │   ├── hooks/
-│   │   ├── theme/
-│   │   ├── modules/
-│   │   │   ├── registry.ts           # Auto-generated at build time
-│   │   │   └── keyword-resolver.ts
-│   │   └── lib/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── tailwind.config.ts
-│   └── vite.config.ts
-├── cli/
-│   ├── __init__.py
-│   ├── main.py                       # `makestack` CLI entry point
-│   ├── commands/
-│   │   ├── start.py
-│   │   ├── dev.py
-│   │   ├── module.py
-│   │   ├── data.py
-│   │   └── mcp.py
-│   └── ...
-├── docker-compose.yml
-├── docker-compose.dev.yml
-├── Dockerfile
-├── CLAUDE.md                         # This file
-├── LICENSE                           # Proprietary (All Rights Reserved)
-├── README.md
-└── CONTRIBUTING.md
-```
+### Key Infrastructure
 
----
+**CatalogueClient** (`core_client.py`) — LRU cache with stale-while-revalidate:
+- Fresh hit → return cached
+- Stale + Core up → return cached, refresh async
+- Stale + Core down → return stale with warning
+- Cache miss + Core down → raise `CoreUnavailableError`
+- List/search TTL: 5 min. Individual items: 30 min. Max 500 entries.
 
-## Startup Sequence
+**UserDB** (`userdb.py`) — async SQLite:
+- WAL mode, FK enforced, row factory → dicts
+- Methods: `fetch_one`, `fetch_all`, `execute`, `execute_returning`, `count`
+- Backup/restore: native async backup, retention policy pruning
 
-```
-1. Parse CLI flags and environment variables
-2. Open UserDB at ~/.makestack/userdb.sqlite (create if first run)
-3. Run Shell-owned migrations (core tables)
-4. Attempt Core connection (localhost:8420 by default)
-   ├─ Success → load config from .makestack/config.json via Core API
-   └─ Failure → load cached config if available, enter degraded mode
-5. Discover installed modules (read installed_modules table)
-   For each enabled module:
-     a. Import the Python package
-     b. Read its manifest.json
-     c. Validate manifest against current Shell version
-     d. Run pending UserDB migrations
-     e. Mount its FastAPI router at /modules/{name}/
-     f. Collect keyword renderer registrations
-     g. Collect panel registrations
-     h. Inject CatalogueClient and UserDB access via DI
-6. Build keyword renderer registry (Shell core + all modules)
-7. Build capabilities registry (all endpoints + module endpoints)
-8. Start FastAPI server (serves REST API + frontend + MCP SSE endpoint)
-9. Begin Core health check polling
-10. Log startup summary
-```
+**LogBroadcaster** (`log_broadcast.py`) — SSE fan-out:
+- structlog processor broadcasts every log event to SSE subscribers
+- Non-blocking (slow subscribers drop events)
+
+**Dependencies** (`dependencies.py`) — all singletons on `app.state`:
+- `app.state.core_client` → CatalogueClient
+- `app.state.userdb` → UserDB
+- `app.state.module_registry` → ModuleRegistry
+- `app.state.registry_client` → RegistryClient
+- `app.state.package_cache` → PackageCache
+- `app.state.config` → dict
+- `app.state.dev_mode` → bool
+- `app.state.core_connected` → bool (updated by health poll every 30s)
+
+### Startup Sequence
+1. Load config from environment
+2. Configure structlog (JSON or console based on dev_mode)
+3. Open UserDB + run migrations (001-007)
+4. Attempt Core connection (log warning if unavailable)
+5. Load and mount all modules (validate, migrate, mount routers)
+6. Mount frontend static files
+7. Start background tasks (Core health polling, daily backup)
 
 ### Degraded Mode
-
-The Shell MUST start even when Core is unreachable:
-
-| Feature | When Core is down | Source |
-|---------|------------------|--------|
-| Catalogue browsing | Cached data with staleness warning | Proxy cache |
-| Catalogue search | Disabled with clear message | Requires Core |
-| Catalogue create/edit | Disabled with clear message | Requires Core |
-| Inventory browsing | Fully functional | UserDB (local) |
-| Workshop management | Fully functional | UserDB (local) |
-| Settings | Fully functional | UserDB (local) |
-| Theme | Fully functional | Already loaded |
-| MCP server | Functional for local operations, degraded for catalogue | Same as above |
+Shell starts even when Core is unreachable:
+- Catalogue reads → cached data with staleness warning
+- Catalogue writes/search → disabled with clear message
+- Inventory, workshops, settings, user profile → fully functional (local)
+- MCP server → functional for local operations, degraded for catalogue
 
 ---
 
-## Version History and Diff
+## Configuration
 
-Git is a complete history of how a maker's craft evolves. The Shell exposes this as first-class:
-
-- **Version timeline** — every primitive has a scrollable history
-- **Side-by-side diff** — structured field-level comparison (not text diff)
-- **Inventory version tracking** — shows if catalogue entry was updated since added
-- **Project version context** — view referenced entries as they were at project creation time
-
-Frontend components (part of `@makestack/ui`):
-- `<VersionTimeline>`, `<DiffViewer>`, `<VersionBadge>`, `<VersionCompare>`
-
----
-
-## Theme System
-
-Themes are JSON files in `.makestack/themes/` in the data repo (served via Core):
-
-- Theme JSON → CSS custom properties → Tailwind reads variables
-- Default theme: "Cyberpunk" (dark, neon accents)
-- Ships with 4 themes: Cyberpunk, Workshop, Daylight, High-Contrast
-
-See **05-DESIGN-SYSTEM.md** for full details.
-
----
-
-## Module System Details
-
-### Meta Namespace Enforcement
-
-Modules write to `meta` on catalogue primitives, scoped to their namespace:
-- Module `inventory-stock` can write to `meta.inventory-stock`, read any namespace
-- Shell proxy validates namespace before forwarding writes to Core
-- Writing to another module's namespace → `403 Forbidden`
-
-### Module Peer Awareness
-
-1. `meta` namespaces (read across freely, write own only)
-2. `peers.call()` — invoke peer module functions
-3. No direct cross-module table access
-
-### Module Migration Lifecycle
-
-- Numbered sequential migrations per module, run at startup if pending
-- Shell tracks applied migrations in `module_migrations` table
-- Uninstall does NOT drop tables or data
-- Table names prefixed with module name (e.g., `inventory_stock`)
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `MAKESTACK_CORE_URL` | `http://localhost:8420` | Core API base URL |
+| `MAKESTACK_CORE_API_KEY` | *(none)* | API key for Core auth |
+| `MAKESTACK_USERDB_PATH` | `~/.makestack/userdb.sqlite` | Personal database path |
+| `MAKESTACK_DEV_MODE` | `false` | Enable dev logging + routes |
+| `MAKESTACK_PORT` | `3000` | Shell listen port |
+| `MAKESTACK_HOME` | `~/.makestack` | Base config directory |
+| `MAKESTACK_API_KEY` | *(none)* | Shell API key (for auth) |
+| `MAKESTACK_SHELL_URL` | `http://localhost:3000` | MCP server target (stdio mode) |
+| `MAKESTACK_SHELL_TOKEN` | *(none)* | MCP server auth token |
+| `MAKESTACK_MCP_ALLOWED_HOSTS` | *(none)* | Reverse-proxy domains for MCP |
 
 ---
 
 ## Code Standards
 
 ### Python (Backend)
-- Python 3.12+ (use modern syntax: `str | None`, match statements, etc.)
+- Python 3.10+ (use `str | None` union syntax, etc.)
 - Type hints on all function signatures
 - Async everywhere — FastAPI endpoints, httpx calls, aiosqlite queries
 - Pydantic 2.x for all request/response models
-- structlog for logging (structured, tagged by component/module)
+- structlog for logging (tagged by component)
 - pytest + pytest-asyncio for tests
-- Docstrings on all exported functions and classes
-- Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, etc.)
+- Error responses always include `suggestion` field for AI consumption
 
 ### TypeScript (Frontend)
-- Strict mode enabled
+- Strict mode enabled, `erasableSyntaxOnly: true`
 - No `any` — use `unknown` + type guards
-- TanStack Query for all server state (no useState for async data)
-- TanStack Router for all navigation (no direct window.location)
+- TanStack Query for all server state
+- TanStack Router for all navigation
 - Tailwind only — no inline styles, no CSS modules
-- Components are small and single-purpose
 
 ### General
-- **API-first:** build the endpoint before the UI
-- **Error messages:** always include `suggestion` field with actionable text
-- **No silent failures:** log warnings, return structured errors
-
-```python
-# Good — async, typed, descriptive error
-async def get_item(item_id: str, db: aiosqlite.Connection) -> InventoryItem:
-    item = await db.execute_fetchone(
-        "SELECT * FROM inventory_items WHERE id = ?", [item_id])
-    if not item:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "Inventory item not found",
-                "item_id": item_id,
-                "suggestion": "Use GET /api/inventory to list available items"
-            }
-        )
-    ...
-
-# Bad — sync, untyped, useless error
-def get_item(id):
-    print(f"getting {id}")
-    item = db.get(id)
-    if not item:
-        raise HTTPException(404, "not found")
-    ...
-```
+- API-first: build the endpoint before the UI
+- No silent failures: log warnings, return structured errors
+- Route ordering: specific routes before `/{id}` catch-alls
+- Conventional Commits (`feat:`, `fix:`, `docs:`, etc.)
 
 ---
 
-## Specification Documents
+## Testing
 
-The full specs are in the makestack-docs repo. Key documents for Shell development:
+```bash
+# Run all tests
+python3 -m pytest backend/tests/ -x -q
 
-- **01-ARCHITECTURE.md** — Two-system design, three-layer data model
-- **02-DATA-MODEL.md** — Six primitives, schemas, relationships, workshops
-- **03-JSON-KEYWORD-CONVENTION.md** — Keyword format, core keywords, module extension pattern
-- **04-MODULE-INTERFACE.md** — Module config, keyword registration, lifecycle
-- **05-DESIGN-SYSTEM.md** — Theme JSON structure, CSS variables, typography, component patterns, accessibility
-- **06-TECH-STACK-DECISIONS.md** — Why Python+React, why Tailwind+Radix, why SQLite
-- **08-REPOSITORY-STRUCTURE.md** — Multi-repo layout, docker-compose setup
-- **10-SHELL-ARCHITECTURE.md** — Shell internals: proxy, UserDB, module loader, degraded mode, CLI, startup sequence
-- **11-MODULE-DEVELOPER-GUIDE.md** — Module author contract: manifest spec, SDK surfaces, dependency rules, dev tooling
+# Install dev dependencies
+pip install -e ".[dev]"
+```
+
+**474 tests** across 23 test files covering: Core client + cache, UserDB + migrations, all 14 routers, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, Phase 10 rollback, and end-to-end integration.
+
+**Test patterns:**
+- In-memory UserDB: `UserDB(":memory:")` + `await db.run_migrations()`
+- Mock Core: `unittest.mock.AsyncMock` on `CatalogueClient` spec
+- ASGI test client: `httpx.AsyncClient(transport=ASGITransport(app=test_app))`
+- Dependency overrides: `app.dependency_overrides[get_userdb] = lambda: db`
 
 ---
 
 ## Current State
 
-Shell: **v0 Feature-Complete**
+Shell: **v0 Feature-Complete + Post-v0 Hardening**
 
-The Shell is fully implemented across all seven planned phases. All core systems are operational: the FastAPI backend, catalogue proxy with LRU cache and degraded mode, UserDB with migrations, inventory and workshop management, MCP server (SSE + stdio), React frontend with theme system and keyword renderer registry, module system with full SDK, registry and package manager, export/import, Docker orchestration, and production logging. The test suite covers 314 tests, all passing.
+All seven original phases are complete. Post-v0 additions include:
+- User account management (profile, stats, bio/timezone/locale)
+- MCP action audit logging (transparent tool call tracking)
+- Terminal and live log streaming (SSE + WebSocket)
+- UserDB backup system (automated nightly + manual + retention policy)
+- Install transaction safety (automatic rollback of partial installs)
+- Workshop-module associations (per-workshop module assignment)
+- Module frontend system (Phase 8B — view/panel/keyword registries with error boundaries)
+- Production deployment (Hetzner + Cloudflare Tunnel, see HETZNER.md)
+
+**Test suite:** 474 tests, all passing.
 
 ---
 
@@ -881,40 +691,31 @@ _Post-v0 work to be defined._
 
 ## Decisions Made
 
-- **Licensing: Shell is proprietary (All Rights Reserved).** Core (makestack-core) is MIT open-source. The Shell is private — not to be published, distributed, or used by others without explicit permission. This split is intentional: the catalogue engine is open, the application layer is not. Modules will have their own licensing (TBD per module).
-- **Three extension types: Widgets, Modules, Registry.** These are fundamentally different things with different install flows, different capabilities, and different weights.
-- **Widgets are stateless, frontend-only, no install infrastructure.** They are pure UI enhancement on data that is already meaningful without them. They degrade to raw text gracefully.
-- **Modules are full-stack extensions** with backend routes, UserDB tables, and optional frontend. They are the heavy-weight extension mechanism.
-- **Registry is Git-native, two-level.** Primary index → registries → packages. No npm/PyPI dependency. Any Git host works.
-- **Four installable package types:** modules, widget-packs, catalogues, data. Each has its own install handler with different targets and restart requirements.
-- **Widget packs do NOT require Shell restart** (frontend-only rebuild). Modules DO require restart.
+- **Licensing:** Shell is proprietary (All Rights Reserved). Core is MIT open-source.
+- **Two clients, one API:** React frontend and MCP server both hit the same FastAPI backend.
+- **Three extension types:** Widgets (stateless, frontend-only), Modules (full-stack), Registry (Git-native).
+- **Five package types:** module, widget-pack, catalogue, data, skill.
+- **Widget packs do NOT require Shell restart** (frontend-only). Modules DO require restart.
 - Shell is Python/FastAPI + React (not Go, not Next.js, not Electron)
-- Backend dependency validation is STRICT; frontend is PERMISSIVE
-- UserDB is SQLite via aiosqlite
-- Module tables are typed with real columns (not key-value), FK to inventory
-- Modules share data via `meta` namespaces and `peers.call()`
-- Workshops are schema-free organizational containers
+- UserDB is SQLite via aiosqlite, WAL mode
+- Module tables typed with real columns, FK to inventory
 - Hash-pointer model: inventory references catalogue via Git commit hash
-- User edits go directly to catalogue (Git via Core), not a draft layer
-- Theme system: JSON config → CSS custom properties → Tailwind
-- Default port: Shell on 3000, Core on 8420
-- Single-user auth for v0 (multi-user deferred but schema supports it)
-- Lexend primary font; JetBrains Mono for measurements/data
-- **MCP server is a thin layer over the REST API — never bypasses it**
-- **Every UI operation must have a REST endpoint (API-first, MCP-compatible)**
-- **Module API endpoints auto-generate MCP tools from manifest declarations**
-- **MCP supports SSE (remote) and stdio (local) transports**
-- **`GET /api/capabilities` provides machine-readable self-description**
-- **Error responses include actionable context for AI consumption**
-- **Module tools use `{module_name}__{endpoint_name}` naming**
+- Theme system: JSON → CSS custom properties → Tailwind
+- Default ports: Shell on 3000, Core on 8420
+- MCP server is a thin layer over the REST API — never bypasses it
+- Module API endpoints auto-generate MCP tools from manifest declarations
+- MCP supports SSE (remote) and stdio (local) transports
+- Error responses include actionable `suggestion` field for AI consumption
+- Module tools use `{module_name}__{endpoint_name}` naming
+- MCP tool calls are audit-logged transparently
+- Install transactions tracked for automatic rollback on failure
 
 ## Decisions Deferred
 
-- Open-sourcing the Shell (currently proprietary; may open-source later)
+- Open-sourcing the Shell
 - Multi-user authentication (JWT sessions — API key for v0)
 - Module marketplace or discovery service
 - Mobile-responsive layout (desktop-first for v0)
 - Electron/Tauri desktop wrapper
-- GitHub/remote catalogue federation
-- MCP resource endpoints (exposing catalogue as MCP resources — tools-only for v0)
-- MCP prompts (pre-built prompt templates for common maker workflows)
+- MCP resource endpoints (tools-only for v0)
+- MCP prompts (pre-built prompt templates)

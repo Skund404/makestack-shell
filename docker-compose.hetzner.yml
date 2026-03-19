@@ -1,0 +1,83 @@
+# Makestack — Hetzner + Cloudflare Tunnel deployment
+#
+# Differences from docker-compose.yml:
+#   - No exposed ports on any service (Cloudflare Tunnel handles all ingress)
+#   - cloudflared service routes traffic from your domain to shell:3000
+#   - All services isolated on an internal bridge network
+#   - UFW only needs port 22 open on the server
+#
+# Usage:
+#   cp .env.hetzner.example .env
+#   # Edit .env — set MAKESTACK_API_KEY and CLOUDFLARE_TUNNEL_TOKEN
+#   docker compose -f docker-compose.hetzner.yml up -d --build
+#
+# See HETZNER.md for full setup guide.
+
+services:
+  core:
+    image: makestack/core:latest
+    # If makestack/core:latest is not in a registry, build it first:
+    #   docker build -t makestack/core:latest ../makestack-core
+    volumes:
+      - makestack-data:/data
+    environment:
+      - MAKESTACK_API_KEY=${MAKESTACK_API_KEY}
+    command: >
+      makestack-core
+        -data /data
+        -addr :8420
+        -db /data/.makestack/index.db
+        -api-key ${MAKESTACK_API_KEY}
+        --public-reads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8420/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - makestack
+
+  shell:
+    build: .
+    volumes:
+      - makestack-userdb:/home/makestack
+    environment:
+      - MAKESTACK_CORE_URL=http://core:8420
+      - MAKESTACK_CORE_API_KEY=${MAKESTACK_API_KEY}
+      - MAKESTACK_USERDB_PATH=/home/makestack/.makestack/userdb.sqlite
+      - MAKESTACK_DEV_MODE=false
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - makestack
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      shell:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - makestack
+
+networks:
+  makestack:
+    driver: bridge
+
+volumes:
+  makestack-data:
+    driver: local
+  makestack-userdb:
+    # Persists all of /home/makestack/ including:
+    #   ~/.makestack/userdb.sqlite     — personal state
+    #   ~/.makestack/packages/         — installed modules (kitchen, inventory-stock)
+    #   ~/.makestack/registries/       — package registry cache
+    #   ~/.makestack/logs/             — production logs
+    driver: local

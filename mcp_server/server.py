@@ -28,6 +28,7 @@ import uuid
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.sse import TransportSecuritySettings
 
 from .tools import catalogue, data, inventory, mcp_log, modules, settings, system, users, version, workshops
 
@@ -164,6 +165,19 @@ def create_server(api_client: httpx.AsyncClient | None = None) -> _LoggingFastMC
 
     session_id = str(uuid.uuid4())
 
+    # Allow extra hosts via env var (comma-separated) for reverse-proxy deployments.
+    # e.g. MAKESTACK_MCP_ALLOWED_HOSTS=makestack.duckdns.org
+    _extra_hosts = [
+        h.strip()
+        for h in os.getenv("MAKESTACK_MCP_ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    ]
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"] + _extra_hosts,
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+    )
+
     mcp = _LoggingFastMCP(
         name="makestack",
         instructions=(
@@ -178,6 +192,7 @@ def create_server(api_client: httpx.AsyncClient | None = None) -> _LoggingFastMC
         ),
         log_api=api_client,
         session_id=session_id,
+        transport_security=transport_security,
     )
 
     # Register tool groups — order doesn't matter for MCP but keep it logical.

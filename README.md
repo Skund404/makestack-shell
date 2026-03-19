@@ -22,10 +22,12 @@ makestack-core  (Go, port 8420)
          │
 makestack-shell  (Python/FastAPI, port 3000)
     ├── FastAPI backend
-    │     Catalogue proxy ─── Core API
-    │     UserDB (SQLite)     Inventory, workshops, settings
+    │     Catalogue proxy ─── Core API (with LRU cache + degraded mode)
+    │     UserDB (SQLite)     Inventory, workshops, settings, users
     │     Module system       Routes, migrations, SDK
     │     Package manager     Git-native registry
+    │     MCP action log      Audit trail for AI operations
+    │     Backup system       Automated + manual UserDB backups
     │
     ├── React frontend        Human UI
     └── MCP server            AI agent interface (SSE + stdio)
@@ -37,17 +39,21 @@ makestack-shell  (Python/FastAPI, port 3000)
 
 ## Features
 
-- **Catalogue proxy** — full pass-through to Core with degraded-mode LRU cache (stale-while-revalidate when Core is down)
-- **Inventory** — personal relationship to catalogue entries via immutable Git commit hash-pointers
-- **Workshops** — schema-free organizational containers (by project, client, domain, or time)
+- **Catalogue proxy** — full pass-through to Core with LRU cache and stale-while-revalidate degraded mode
+- **Inventory** — personal relationship to catalogue entries via immutable Git commit hash-pointers with staleness detection
+- **Workshops** — organizational containers with module associations, member management, and per-workshop navigation
+- **User profiles** — name, avatar, bio, timezone, locale, activity stats
 - **Version history and diffs** — every catalogue primitive has a full Git history with structured field-level diffs
 - **Module system** — full-stack extensions (Python backend + React frontend) with migrations, SDK, and auto-MCP exposure
 - **Widget system** — stateless frontend-only keyword renderers; core widgets: `TIMER_`, `MEASUREMENT_`, `MATERIAL_REF_`, `TOOL_REF_`, `TECHNIQUE_REF_`, `IMAGE_`, `LINK_`, `NOTE_`, `CHECKLIST_`
-- **Git-native package manager** — install modules, widget packs, catalogues, and data packs from any Git host
-- **MCP server** — 32+ tools across catalogue, inventory, workshops, version, settings, modules, packages, and system; SSE and stdio transports
+- **Git-native package manager** — install modules, widget packs, catalogues, data packs, and skills from any Git host
+- **MCP server** — 40+ tools across 10 groups; SSE and stdio transports; transparent action audit logging
 - **Export/import** — portable JSON snapshots of personal state (workshops, inventory, preferences)
+- **Backup system** — automated nightly UserDB backups with retention policy, manual backup/restore
+- **Install safety** — transaction tracking with automatic rollback of partial installs
+- **Terminal & logs** — live structured log streaming via SSE and WebSocket
 - **Theme system** — JSON themes injected as CSS custom properties at runtime; ships with Cyberpunk, Workshop, Daylight, High-Contrast
-- **Production-ready** — structured JSON logging, rotating log files, request middleware with slow-request warnings, Docker support
+- **Production-ready** — structured JSON logging, Docker support, Hetzner + Cloudflare Tunnel deployment
 
 ---
 
@@ -56,7 +62,7 @@ makestack-shell  (Python/FastAPI, port 3000)
 ### With Docker (recommended)
 
 ```bash
-docker-compose up
+docker compose up
 ```
 
 This starts Core and Shell together. Shell will be available at `http://localhost:3000`.
@@ -64,7 +70,7 @@ This starts Core and Shell together. Shell will be available at `http://localhos
 Set `MAKESTACK_API_KEY` to secure the API (defaults to `dev-key` for local use):
 
 ```bash
-MAKESTACK_API_KEY=my-secret docker-compose up
+MAKESTACK_API_KEY=my-secret docker compose up
 ```
 
 ### Development
@@ -87,6 +93,7 @@ Dev mode enables:
 - Keyword Playground at `http://localhost:5173/dev/keywords`
 - Schema Inspector at `/dev/schema`
 - Module Inspector at `/dev/modules`
+- API Documentation at `/dev/docs`
 
 **With a local module under development:**
 
@@ -99,30 +106,42 @@ makestack dev --module ../my-module
 ## CLI
 
 ```bash
-makestack start                     # Start Shell (production)
-makestack dev                       # Start in dev mode
-makestack dev --module ./path       # Dev mode + mount local module
+# Server
+makestack start                        # Start Shell (production)
+makestack dev                          # Start in dev mode
+makestack dev --module ./path          # Dev mode + mount local module
 
-makestack mcp                       # Run MCP server (stdio transport)
+# MCP
+makestack mcp                          # Run MCP server (stdio transport)
 
-makestack install inventory-stock   # Install a package from registry
-makestack install @1.2.0            # Pin to version
+# Packages
+makestack install inventory-stock      # Install from registry
 makestack install https://github.com/you/repo   # Direct Git URL
+makestack install ./local-module       # Local path
 makestack uninstall inventory-stock
 makestack update inventory-stock
 makestack search "leather"
+makestack list                         # List installed packages
 
-makestack registry add https://github.com/someone/their-registry
+# Registry
+makestack registry add official https://github.com/makestack/registry
 makestack registry list
-makestack registry remove community-leather
+makestack registry remove community
+makestack registry refresh             # Pull latest from all registries
 
-makestack module create my-module   # Scaffold a new module
-makestack module validate ./path    # Validate a module manifest
+# Modules
+makestack module create my-module      # Scaffold a new module
+makestack module validate ./path       # Validate a module manifest
 
+# Data
 makestack export --output backup.json
 makestack import backup.json
 
-makestack rebuild-frontend          # Rebuild after installing widget packs
+# Maintenance
+makestack rebuild-frontend             # Rebuild after widget pack install
+makestack repair                       # Recover from interrupted installs
+makestack backup                       # Manual UserDB backup
+makestack restore /path/to/backup      # Restore from backup
 ```
 
 ---
@@ -141,7 +160,7 @@ http://localhost:3000/mcp/sse
 makestack mcp
 ```
 
-### Available Tools
+### Available Tools (40+)
 
 | Group | Tools |
 |-------|-------|
@@ -150,8 +169,10 @@ makestack mcp
 | Inventory | `add_to_inventory`, `list_inventory`, `get_inventory_item`, `check_inventory_updates`, `update_inventory_pointer`, `remove_from_inventory` |
 | Workshops | `list_workshops`, `get_workshop`, `create_workshop`, `update_workshop`, `delete_workshop`, `add_to_workshop`, `remove_from_workshop`, `set_active_workshop` |
 | Settings | `get_settings`, `update_settings`, `get_theme`, `set_theme` |
-| Modules | `list_modules`, `enable_module`, `disable_module`, `call_module`, `list_packages`, `install_package`, `uninstall_package`, `search_packages`, `list_registries` |
+| Modules | `list_modules`, `enable_module`, `disable_module`, `list_packages`, `install_package`, `uninstall_package`, `update_package`, `search_packages`, `list_registries`, `add_registry`, `remove_registry`, `refresh_registries` |
+| Users | `get_user_profile`, `update_user_profile`, `get_user_stats` |
 | Data | `export_data`, `import_data` |
+| MCP Log | `list_mcp_actions`, `get_daily_summary` |
 | System | `get_status`, `get_capabilities` |
 
 Module API endpoints are automatically exposed as MCP tools when modules are installed — no extra code required.
@@ -165,7 +186,7 @@ Modules are full-stack extensions: Python backend + optional React frontend + Us
 ```
 my-module/
 ├── makestack-package.json   # type: "module"
-├── manifest.json            # Module contract (keywords, endpoints, tables)
+├── manifest.json            # Module contract (keywords, endpoints, tables, views, panels)
 ├── backend/
 │   ├── routes.py            # FastAPI router (mounted at /modules/my-module/)
 │   ├── services.py
@@ -178,11 +199,12 @@ my-module/
 
 **Module SDK surfaces:**
 - `CatalogueClient` — typed proxy to Core
-- `UserDB` — scoped access to the module's own tables
+- `ModuleUserDB` — scoped access to the module's own tables (enforced by regex)
 - `ShellContext` — current user, active workshop, version, dev mode
-- `ModuleConfig` — module config from `.makestack/modules/{name}.config.json`
+- `ModuleConfig` — module config with manifest defaults + user overrides
 - `PeerModules` — check peer availability and call peer module functions
 - `get_logger(module_name)` — pre-tagged structlog logger
+- Testing mocks: `MockCatalogueClient`, `MockUserDB`, `MockShellContext`, `MockPeerModules`, `create_test_app`
 
 **Install a module:**
 ```bash
@@ -208,16 +230,19 @@ makestack dev --module .
 | `widget-pack` | Frontend-only keyword renderer bundle | No |
 | `catalogue` | Primitive data to merge into Core | No |
 | `data` | Themes, presets, or other static files | No |
+| `skill` | AI skill JSON definitions | No |
 
 ---
 
 ## Tech Stack
 
-**Backend:** Python 3.10+, FastAPI, httpx, aiosqlite, Pydantic 2.x, structlog, MCP SDK
+**Backend:** Python 3.10+, FastAPI, httpx, aiosqlite, Pydantic 2.x, structlog, MCP SDK, Click
 
-**Frontend:** React 18, TypeScript (strict), Vite, TanStack Router, TanStack Query, Tailwind CSS v4, Radix UI, Lucide, Recharts
+**Frontend:** React 19, TypeScript (strict), Vite 7, TanStack Router v1, TanStack Query v5, Tailwind CSS v4, Radix UI, Lucide
 
 **Fonts:** Lexend (primary, dyslexia-friendly), JetBrains Mono (data/measurements)
+
+**Infra:** Docker, docker-compose, Hetzner CX21, Cloudflare Tunnel
 
 ---
 
@@ -230,11 +255,15 @@ All endpoints return typed JSON. List endpoints include pagination metadata (`to
 | Catalogue (proxy to Core) | `/api/catalogue/` |
 | Inventory | `/api/inventory/` |
 | Workshops | `/api/workshops/` |
-| Modules | `/api/modules/` |
-| Packages | `/api/packages/` |
-| Registries | `/api/registries/` |
+| Users | `/api/users/` |
 | Settings | `/api/settings/` |
+| Modules | `/api/modules/` |
+| Packages & Registries | `/api/packages/`, `/api/registries/` |
 | Data (export/import) | `/api/data/` |
+| Backups | `/api/backups/` |
+| Terminal & Logs | `/api/terminal/` |
+| MCP Action Log | `/api/mcp-log/` |
+| Version | `/api/version/` |
 | System | `/api/status`, `/api/capabilities` |
 | Dev (dev mode only) | `/api/dev/` |
 
@@ -248,7 +277,7 @@ Full self-description available at `GET /api/capabilities`.
 python3 -m pytest backend/tests/ -x -q
 ```
 
-314 tests covering: Core client, UserDB migrations, all REST routes, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, and end-to-end integration (including degraded mode and export/import).
+474 tests across 23 files covering: Core client + cache, UserDB + migrations, all REST routes, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, install transaction rollback, and end-to-end integration.
 
 ---
 
@@ -260,7 +289,24 @@ python3 -m pytest backend/tests/ -x -q
 | `MAKESTACK_CORE_API_KEY` | *(none)* | API key for Core auth |
 | `MAKESTACK_USERDB_PATH` | `~/.makestack/userdb.sqlite` | Personal database path |
 | `MAKESTACK_DEV_MODE` | `false` | Enable debug API and dev UI |
+| `MAKESTACK_PORT` | `3000` | Shell listen port |
+| `MAKESTACK_HOME` | `~/.makestack` | Base config directory |
 | `MAKESTACK_API_KEY` | *(none)* | Shell API key (for auth) |
+| `MAKESTACK_SHELL_URL` | `http://localhost:3000` | MCP server target (stdio mode) |
+| `MAKESTACK_SHELL_TOKEN` | *(none)* | MCP server auth token |
+| `MAKESTACK_MCP_ALLOWED_HOSTS` | *(none)* | Reverse-proxy domains for MCP |
+
+---
+
+## Deployment
+
+### Hetzner + Cloudflare Tunnel
+
+See [HETZNER.md](HETZNER.md) for the full production deployment guide covering server provisioning, Cloudflare Tunnel setup, and Claude MCP configuration with service token auth.
+
+```bash
+docker compose -f docker-compose.hetzner.yml up -d --build
+```
 
 ---
 
