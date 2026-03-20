@@ -90,24 +90,36 @@ export function WorkshopContextProvider({ children }: { children: React.ReactNod
   const [workshopModules, setWorkshopModules] = useState<string[]>([])
   const [workshopNav, setWorkshopNav] = useState<NavItem[]>(SHELL_NAV_DEFAULTS)
 
-  // Sync from the backend active workshop exactly once on initial load.
-  // After that, only switchWorkshop mutates context state.
-  const syncedRef = useRef(false)
+  // Sync from the backend active workshop on initial load and after remount.
+  // Tracks which workshop ID was last synced — on remount the ref resets to
+  // null so the effect re-fires and restores state from the query cache.
+  const lastSyncedId = useRef<string | null | undefined>(undefined)
 
   useEffect(() => {
-    if (syncedRef.current) return
     if (isLoadingInitial) return
 
-    syncedRef.current = true
+    const targetId = initialWorkshop?.id ?? null
 
-    if (initialWorkshop) {
-      setActiveWorkshop(initialWorkshop)
-      void fetchWorkshopData(initialWorkshop.id).then(({ nav, modules }) => {
+    // Already synced to this workshop (and component hasn't remounted)
+    if (lastSyncedId.current === targetId) return
+    lastSyncedId.current = targetId
+
+    if (!initialWorkshop) {
+      setActiveWorkshop(null)
+      setWorkshopModules([])
+      setWorkshopNav(SHELL_NAV_DEFAULTS)
+      return
+    }
+
+    setActiveWorkshop(initialWorkshop)
+    void fetchWorkshopData(initialWorkshop.id)
+      .then(({ nav, modules }) => {
         setWorkshopNav(nav)
         setWorkshopModules(modules)
       })
-    }
-    // No active workshop → keep SHELL_NAV_DEFAULTS (already the initial state)
+      .catch(() => {
+        // Keep current state on transient error — don't reset to defaults
+      })
   }, [isLoadingInitial, initialWorkshop])
 
   const switchWorkshop = useCallback(
@@ -119,6 +131,9 @@ export function WorkshopContextProvider({ children }: { children: React.ReactNod
       }).then(() => {
         void qc.invalidateQueries({ queryKey: ['workshop-active'] })
       })
+
+      // Update the sync ref so the useEffect doesn't redundantly re-fetch
+      lastSyncedId.current = id
 
       if (!id) {
         setActiveWorkshop(null)
@@ -136,12 +151,20 @@ export function WorkshopContextProvider({ children }: { children: React.ReactNod
       // Fetch nav, modules, and the workshop itself, then navigate to its home.
       // setActiveWorkshop from the API response ensures it's always set correctly,
       // even when workshopList hasn't loaded (e.g. direct URL navigation).
-      void fetchWorkshopData(id).then(({ nav, modules, workshop }) => {
-        setActiveWorkshop(workshop)
-        setWorkshopNav(nav)
-        setWorkshopModules(modules)
-        void navigate({ to: '/workshop/$id', params: { id } })
-      })
+      void fetchWorkshopData(id)
+        .then(({ nav, modules, workshop }) => {
+          setActiveWorkshop(workshop)
+          setWorkshopNav(nav)
+          setWorkshopModules(modules)
+          void navigate({ to: '/workshop/$id', params: { id } })
+        })
+        .catch(() => {
+          // Revert optimistic state on failure
+          lastSyncedId.current = undefined
+          setActiveWorkshop(null)
+          setWorkshopModules([])
+          setWorkshopNav(SHELL_NAV_DEFAULTS)
+        })
     },
     [qc, workshopList, navigate],
   )
