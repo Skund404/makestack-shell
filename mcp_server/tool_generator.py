@@ -7,8 +7,10 @@ FastMCP instance so the AI sees module operations alongside Shell tools.
 
 Tool naming convention: {module_name}__{endpoint_slug}
   - module_name: hyphens replaced with underscores (e.g., inventory_stock)
-  - endpoint_slug: HTTP method + path with slashes/braces replaced by underscores
-  - Example: inventory_stock__get_stock_item_id
+  - endpoint_slug: the manifest endpoint `name` field when present (preferred),
+    otherwise HTTP method + path with slashes/braces replaced by underscores
+  - Example with name field:    kitchen__bulk_update_stock
+  - Example without name field: inventory_stock__get_stock_id
 
 The generated tools delegate to call_module (the generic module passthrough)
 so all auth, routing, and error handling is inherited from the Shell.
@@ -21,12 +23,18 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 
-def _make_tool_name(module_name: str, method: str, path: str) -> str:
+def _make_tool_name(module_name: str, method: str, path: str, name: str | None = None) -> str:
     """Build an MCP tool name from a module endpoint declaration.
 
-    inventory-stock  GET  /stock/{id}  →  inventory_stock__get_stock_id
+    Prefers the manifest `name` field when present:
+      kitchen  POST  /stock/bulk  name=bulk_update_stock  →  kitchen__bulk_update_stock
+
+    Falls back to method+path slug when `name` is absent:
+      inventory-stock  GET  /stock/{id}  →  inventory_stock__get_stock_id
     """
     snake_module = module_name.replace("-", "_")
+    if name:
+        return f"{snake_module}__{name}"
     # Normalise path: drop leading slash, replace {param}, /, - with _
     path_slug = re.sub(r"[{}]", "", path)         # Remove brace wrappers
     path_slug = re.sub(r"[/\-]", "_", path_slug)  # Slashes and hyphens → underscores
@@ -64,7 +72,7 @@ async def generate_module_tools(mcp: FastMCP, module_registry) -> int:
         description: str = ep["description"]
         parameters: dict | None = ep.get("parameters")
 
-        tool_name = _make_tool_name(module_name, method, path)
+        tool_name = _make_tool_name(module_name, method, path, ep.get("name"))
 
         # Build the tool function dynamically.
         # We capture variables via default arguments to avoid closure issues.

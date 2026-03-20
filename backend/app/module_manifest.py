@@ -30,6 +30,7 @@ class ModuleEndpoint(BaseModel):
     method: str                 # GET | POST | PUT | DELETE
     path: str                   # Relative to /modules/{name}/
     description: str
+    name: str | None = None     # Semantic tool name suffix; used instead of method+path slug when present
     parameters: dict | None = None  # JSON Schema for input parameters
 
 
