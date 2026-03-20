@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Outlet } from '@tanstack/react-router'
+import { Outlet, useRouterState } from '@tanstack/react-router'
 import { X, Terminal, ScrollText } from 'lucide-react'
 import { Sidebar } from './Sidebar'
+import { ModuleAppSidebar } from './ModuleAppSidebar'
 import { Header } from './Header'
 import { useSystemStatus } from '@/hooks/use-status'
-import { WorkshopContextProvider } from '@/context/WorkshopContext'
+import { WorkshopContextProvider, useWorkshopContext } from '@/context/WorkshopContext'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { LogPanel } from '@/components/terminal/LogPanel'
 import { DocsPanel } from '@/components/terminal/DocsPanel'
+import { resolveAppMode, type AppModeConfig } from '@/modules/app-registry'
 import { cn } from '@/lib/utils'
 
 /**
@@ -186,6 +188,30 @@ function TabButton({ icon, label, active, onClick }: TabButtonProps) {
 }
 
 // ---------------------------------------------------------------------------
+// App mode entry — stores workshop context on entry to standalone mode
+// ---------------------------------------------------------------------------
+
+function useAppModeEntry(appMode: AppModeConfig | null) {
+  const { activeWorkshop } = useWorkshopContext()
+  const lastAppMode = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (appMode && lastAppMode.current !== appMode.module_name) {
+      lastAppMode.current = appMode.module_name
+      // Store originating workshop for the back link
+      if (activeWorkshop) {
+        try {
+          sessionStorage.setItem('app-mode-workshop-id', activeWorkshop.id)
+          sessionStorage.setItem('app-mode-workshop-name', activeWorkshop.name)
+        } catch { /* ignore */ }
+      }
+    } else if (!appMode) {
+      lastAppMode.current = null
+    }
+  }, [appMode, activeWorkshop])
+}
+
+// ---------------------------------------------------------------------------
 // Root layout
 // ---------------------------------------------------------------------------
 
@@ -208,7 +234,7 @@ export function Layout() {
     }
   }, [])
 
-  // Ctrl+` toggles the bottom panel.
+  // Ctrl+` toggles the bottom panel (works in both modes).
   // ⌘K opens docs panel.
   // ? opens docs panel when not in any input field.
   useEffect(() => {
@@ -275,6 +301,91 @@ export function Layout() {
 
   return (
     <WorkshopContextProvider>
+      <LayoutInner
+        panelOpen={panelOpen}
+        activeTab={activeTab}
+        onTabClick={handleTabClick}
+        onPanelClose={() => setPanel(false)}
+        terminalPrefill={terminalPrefill}
+        onPrefillConsumed={() => setTerminalPrefill('')}
+        docsOpen={docsOpen}
+        onDocsClose={() => setDocsOpen(false)}
+        onRunInTerminal={handleRunInTerminal}
+      />
+    </WorkshopContextProvider>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Inner layout — has access to WorkshopContext (must be inside the provider)
+// ---------------------------------------------------------------------------
+
+interface LayoutInnerProps {
+  panelOpen: boolean
+  activeTab: PanelTab
+  onTabClick: (tab: PanelTab) => void
+  onPanelClose: () => void
+  terminalPrefill: string
+  onPrefillConsumed: () => void
+  docsOpen: boolean
+  onDocsClose: () => void
+  onRunInTerminal: (input: string) => void
+}
+
+function LayoutInner({
+  panelOpen,
+  activeTab,
+  onTabClick,
+  onPanelClose,
+  terminalPrefill,
+  onPrefillConsumed,
+  docsOpen,
+  onDocsClose,
+  onRunInTerminal,
+}: LayoutInnerProps) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const appMode = resolveAppMode(pathname)
+
+  useAppModeEntry(appMode)
+
+  // --- Standalone app mode ---
+  if (appMode) {
+    const SidebarComponent = appMode.custom_sidebar ?? ModuleAppSidebar
+    return (
+      <>
+        <div className="flex h-screen overflow-hidden bg-bg font-sans">
+          <SidebarComponent config={appMode} />
+          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+            <main className="flex-1 min-h-0 overflow-y-auto">
+              <Outlet />
+            </main>
+          </div>
+        </div>
+        {/* Bottom panel as fixed overlay in app mode — hidden by default, Ctrl+` toggles */}
+        {panelOpen && (
+          <div className="fixed inset-x-0 bottom-0 z-50 shadow-lg">
+            <BottomPanel
+              open={panelOpen}
+              activeTab={activeTab}
+              onTabClick={onTabClick}
+              onClose={onPanelClose}
+              terminalPrefill={terminalPrefill}
+              onPrefillConsumed={onPrefillConsumed}
+            />
+          </div>
+        )}
+        <DocsPanel
+          open={docsOpen}
+          onClose={onDocsClose}
+          onRunInTerminal={onRunInTerminal}
+        />
+      </>
+    )
+  }
+
+  // --- Default shell layout ---
+  return (
+    <>
       <div className="flex h-screen overflow-hidden bg-bg font-sans">
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
@@ -286,18 +397,18 @@ export function Layout() {
           <BottomPanel
             open={panelOpen}
             activeTab={activeTab}
-            onTabClick={handleTabClick}
-            onClose={() => setPanel(false)}
+            onTabClick={onTabClick}
+            onClose={onPanelClose}
             terminalPrefill={terminalPrefill}
-            onPrefillConsumed={() => setTerminalPrefill('')}
+            onPrefillConsumed={onPrefillConsumed}
           />
         </div>
       </div>
       <DocsPanel
         open={docsOpen}
-        onClose={() => setDocsOpen(false)}
-        onRunInTerminal={handleRunInTerminal}
+        onClose={onDocsClose}
+        onRunInTerminal={onRunInTerminal}
       />
-    </WorkshopContextProvider>
+    </>
   )
 }

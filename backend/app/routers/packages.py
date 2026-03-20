@@ -498,6 +498,107 @@ async def update_package(
 
 
 # ---------------------------------------------------------------------------
+# Preview — dependency resolution before install
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/packages/{name}/preview",
+    summary="Preview what installing a package would do",
+)
+async def preview_package(
+    name: str,
+    request: Request,
+    db: UserDB = Depends(get_userdb),
+) -> dict:
+    """Preview a package install: reads the manifest from the registry without installing,
+    resolves required peer_modules recursively, and reports which are already installed.
+    """
+    registry_client = _get_registry_client(request)
+    if registry_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Registry client not available"},
+        )
+
+    info = registry_client.resolve(name)
+    if info is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": f"Package '{name}' not found in any configured registry",
+                "suggestion": "Use GET /api/packages/search to search across registries.",
+            },
+        )
+
+    # Fetch the manifest to read peer_modules
+    package_cache = _get_package_cache(request)
+    manifest_data: dict = {
+        "name": info.name,
+        "type": info.type,
+        "description": info.description,
+    }
+    dependencies: list[dict] = []
+    warnings: list[str] = []
+
+    if package_cache:
+        try:
+            cache_path = await package_cache.fetch(
+                info.name, info.git_url, info.type, subdir=info.subdir
+            )
+            manifest = _load_package_manifest(str(cache_path))
+            manifest_data = {
+                "name": manifest.name,
+                "type": manifest.type,
+                "version": manifest.version,
+                "description": getattr(manifest, "description", ""),
+            }
+
+            # Read peer_modules from the module's own manifest.json (not package manifest)
+            module_manifest_path = Path(cache_path) / "manifest.json"
+            if module_manifest_path.exists():
+                try:
+                    raw = json.loads(module_manifest_path.read_text(encoding="utf-8"))
+                    peers = raw.get("peer_modules", {})
+                    for peer in peers.get("required", []):
+                        peer_name = peer["name"] if isinstance(peer, dict) else peer
+                        installed = await db.fetch_one(
+                            "SELECT name FROM installed_modules WHERE name = ?", [peer_name]
+                        )
+                        dependencies.append({
+                            "name": peer_name,
+                            "type": "required",
+                            "already_installed": installed is not None,
+                        })
+                    for peer in peers.get("optional", []):
+                        peer_name = peer["name"] if isinstance(peer, dict) else peer
+                        installed = await db.fetch_one(
+                            "SELECT name FROM installed_modules WHERE name = ?", [peer_name]
+                        )
+                        dependencies.append({
+                            "name": peer_name,
+                            "type": "optional",
+                            "already_installed": installed is not None,
+                        })
+                except (json.JSONDecodeError, KeyError):
+                    warnings.append("Could not parse module manifest.json for peer dependencies")
+        except Exception as exc:
+            warnings.append(f"Could not fetch package for preview: {exc}")
+
+    # Check if the target itself is already installed
+    already_installed = await db.fetch_one(
+        "SELECT name FROM installed_modules WHERE name = ?", [name]
+    )
+
+    return {
+        "module": manifest_data,
+        "already_installed": already_installed is not None,
+        "dependencies": dependencies,
+        "warnings": warnings,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
 

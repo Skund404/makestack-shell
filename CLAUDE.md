@@ -81,7 +81,7 @@ makestack-shell  (Python/FastAPI, port 3000)
 - **Database:** SQLite via aiosqlite (UserDB — local personal state)
 - **Validation:** Pydantic 2.x
 - **Logging:** structlog (tagged, structured, with SSE broadcast)
-- **Testing:** pytest + pytest-asyncio (474 tests)
+- **Testing:** pytest + pytest-asyncio (487 tests)
 - **Module SDK:** `makestack_sdk` package (provided by this repo, consumed by modules)
 - **MCP server:** `mcp` Python SDK (SSE + stdio transports)
 - **CLI:** Click
@@ -197,13 +197,14 @@ makestack-shell/
 │   │   ├── hooks/                   # TanStack Query hooks per domain
 │   │   ├── context/                 # WorkshopContext (global active workshop)
 │   │   ├── theme/                   # Theme loader + token types
-│   │   ├── modules/                 # View/panel/keyword registries
+│   │   ├── modules/                 # View/panel/keyword/app registries
 │   │   │   ├── registry.ts          # Auto-generated at build time
+│   │   │   ├── app-registry.ts      # App mode config registry
 │   │   │   ├── view-registry.ts     # Pattern-based route matching
 │   │   │   ├── panel-registry.ts    # Panel component registry
 │   │   │   └── keyword-resolver.ts  # 3-layer keyword resolution
 │   │   ├── routes/                  # Route page components
-│   │   └── lib/                     # api.ts, types.ts, utils.ts
+│   │   └── lib/                     # api.ts, types.ts, utils.ts, icons.ts
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── tsconfig.json
@@ -283,6 +284,7 @@ makestack-shell/
 | DELETE | `/api/workshops/{id}/members/{ref}` | Remove member |
 | GET | `/api/workshops/{id}/nav` | Workshop navigation items |
 | POST | `/api/workshops/{id}/modules` | Assign module to workshop |
+| POST | `/api/workshops/{id}/add-app` | Install + assign module in one step |
 
 ### Users
 | Method | Endpoint | Description |
@@ -317,6 +319,7 @@ makestack-shell/
 | POST | `/api/packages/{name}/update` | Update a package |
 | GET | `/api/packages/search` | Search across registries |
 | GET | `/api/packages/repair` | Recover from interrupted installs |
+| GET | `/api/packages/{name}/preview` | Preview install dependencies |
 | GET | `/api/registries` | List configured registries |
 | POST | `/api/registries` | Add a registry |
 | DELETE | `/api/registries/{name}` | Remove a registry |
@@ -467,7 +470,33 @@ inventory.catalogue_hash = "a3f8c1d..."   ← immutable pointer to specific vers
 - `keywords[]`, `api_endpoints[]`, `views[]`, `panels[]`
 - `userdb_tables[]`, `dependencies`, `peer_modules`
 - `core_api_permissions[]`, `config_defaults`
+- `app_mode` — standalone app mode configuration (see below)
 - `replaces_shell_view` — only "inventory", "workshops", or "catalogue"
+
+### Standalone App Mode (`app_mode`)
+Modules can declare `app_mode` in their manifest to run as standalone apps with their
+own branded sidebar. When a user navigates to a route under the module's `home_route`,
+the shell chrome (Sidebar, Header, StaleBanner) is hidden and replaced by the module's
+own sidebar.
+
+```python
+class ModuleAppMode(BaseModel):
+    enabled: bool = False
+    title: str = ""                  # Branding title (e.g., "Kitchen")
+    subtitle: str = ""               # Subtitle (e.g., "Home module")
+    sidebar_width: int = 186
+    home_route: str = ""             # Default landing route
+    nav_items: list[ModuleAppNavItem] = []  # Sidebar navigation items
+    theme: ModuleAppTheme | None = None     # Sidebar color overrides
+```
+
+Key patterns:
+- `resolveAppMode(pathname)` in `app-registry.ts` uses longest-prefix-match
+- `Layout.tsx` renders `LayoutInner` which switches between shell and app mode
+- Workshop home shows launcher cards for modules with `app_mode.enabled = true`
+- Modules can register a custom sidebar component via `registerAppMode({ custom_sidebar })`
+- Workshop context stored in `sessionStorage` for the back link
+- BottomPanel renders as a fixed overlay in app mode (Ctrl+` toggles)
 
 ### SDK Surfaces (for module authors)
 ```python
@@ -486,7 +515,8 @@ from makestack_sdk import (
 ```
 
 ### Frontend Module System
-Three registries, all populated at startup via `registerAllModules()`:
+Four registries, all populated at startup via `registerAllModules()`:
+- **App registry** — standalone app mode configs, resolved by Layout via `resolveAppMode()`
 - **View registry** — pattern-based route matching, caught by router's `defaultNotFoundComponent`
 - **Panel registry** — panel components rendered on workshop home
 - **Keyword resolver** — 3-layer priority: module > pack > core
@@ -531,12 +561,19 @@ Migration 007 tracks install steps. On startup, the module loader checks for `st
 
 ### Layout Structure
 ```
-<Layout>
-  <StaleBanner>           (dismissed when Core unreachable)
-  <Sidebar>               (w-52, workshop context, module nav, shell nav, dev tools)
-  <Header>                (breadcrumbs, search, workshop switcher, Core indicator)
-  <main>                  (route outlet)
-  <BottomPanel>           (resizable: Terminal tab, Log tab)
+<Layout> (dual-mode — switches based on resolveAppMode(pathname))
+
+  Shell mode (default):
+    <Sidebar>               (w-52, workshop context, module nav, shell nav, dev tools)
+    <Header>                (breadcrumbs, search, workshop switcher, Core indicator)
+    <StaleBanner>           (dismissed when Core unreachable)
+    <main>                  (route outlet)
+    <BottomPanel>           (resizable: Terminal tab, Log tab)
+
+  App mode (when pathname matches a registered app_mode.home_route):
+    <ModuleAppSidebar>      (branded sidebar, or custom_sidebar component)
+    <main>                  (route outlet)
+    <BottomPanel>           (fixed overlay, hidden by default, Ctrl+` toggles)
 </Layout>
 ```
 
@@ -655,7 +692,7 @@ python3 -m pytest backend/tests/ -x -q
 pip install -e ".[dev]"
 ```
 
-**474 tests** across 23 test files covering: Core client + cache, UserDB + migrations, all 14 routers, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, Phase 10 rollback, and end-to-end integration.
+**487 tests** across 24 test files covering: Core client + cache, UserDB + migrations, all 14 routers, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, Phase 10 rollback, and end-to-end integration.
 
 **Test patterns:**
 - In-memory UserDB: `UserDB(":memory:")` + `await db.run_migrations()`
@@ -679,13 +716,23 @@ All seven original phases are complete. Post-v0 additions include:
 - Module frontend system (Phase 8B — view/panel/keyword registries with error boundaries)
 - Production deployment (Hetzner + Cloudflare Tunnel, see HETZNER.md)
 
-**Test suite:** 474 tests, all passing.
+**Test suite:** 487 tests, all passing.
+
+**Post-v0 — Standalone App Mode:**
+- Modules can declare `app_mode` in manifest to run as standalone apps
+- Dual-mode Layout: shell chrome vs. module branded sidebar (longest-prefix-match)
+- Workshop home shows launcher cards for app-mode modules + "+Add app" button
+- AddAppDialog: Available tab (one-click add) + Browse tab (search, preview, install)
+- New endpoints: `POST /api/workshops/{id}/add-app`, `GET /api/packages/{name}/preview`
+- App registry, shared icon resolver, ModuleAppSidebar component
+- Kitchen module: first app-mode module with custom sidebar, Home + Larder views
 
 ---
 
 ## Next Steps
 
-_Post-v0 work to be defined._
+- Kitchen frontend Part 3: rebuild Recipes, Plan, Shop views matching mockup
+- Kitchen CLAUDE.md update for new frontend architecture
 
 ---
 
@@ -709,6 +756,13 @@ _Post-v0 work to be defined._
 - Module tools use `{module_name}__{endpoint_name}` naming
 - MCP tool calls are audit-logged transparently
 - Install transactions tracked for automatic rollback on failure
+
+- Module app_mode uses longest-prefix-match for route resolution
+- Standalone app mode stores workshop context in sessionStorage for back link
+- Modules can register custom sidebar components to replace the generic ModuleAppSidebar
+- Workshop home is the launchpad — launcher cards for app-mode modules, panels below
+- Add App dialog provides a streamlined install+assign flow from workshop home
+- Icon resolution extracted to shared `lib/icons.ts` (both Sidebar and ModuleAppSidebar)
 
 ## Decisions Deferred
 

@@ -1,73 +1,31 @@
 import {
-  Blocks,
   BookOpen,
   Box,
   ChevronRight,
   Cog,
-  Cpu,
   Database,
   FlaskConical,
   Folder,
   GitFork,
-  Globe,
   Hammer,
   Layers,
   LayoutGrid,
   Package,
-  Puzzle,
   ScrollText,
   Search,
-  ShieldCheck,
-  Star,
-  Tag,
   Terminal,
   Wrench,
   X,
-  Zap,
-  type LucideIcon,
 } from 'lucide-react'
 import { Link, useLocation } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
+import { resolveIcon } from '@/lib/icons'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { useStaleItems } from '@/hooks/use-inventory'
 import { useWorkshopContext } from '@/context/WorkshopContext'
 import { apiGet } from '@/lib/api'
 import type { NavItem as ContextNavItem } from '@/lib/types'
-
-// ---------------------------------------------------------------------------
-// Icon resolution — maps nav item icon strings to Lucide components
-// ---------------------------------------------------------------------------
-
-const ICON_MAP: Record<string, LucideIcon> = {
-  package:       Package,
-  box:           Box,
-  book:          BookOpen,
-  layers:        Layers,
-  folder:        Folder,
-  search:        Search,
-  cog:           Cog,
-  wrench:        Wrench,
-  terminal:      Terminal,
-  database:      Database,
-  'layout-grid': LayoutGrid,
-  'git-fork':    GitFork,
-  hammer:        Hammer,
-  blocks:        Blocks,
-  puzzle:        Puzzle,
-  star:          Star,
-  tag:           Tag,
-  zap:           Zap,
-  cpu:           Cpu,
-  globe:         Globe,
-  shield:        ShieldCheck,
-}
-
-/** Resolve a Lucide icon name string → rendered icon node. Falls back to Box. */
-function resolveIcon(name: string): React.ReactNode {
-  const Icon = ICON_MAP[name?.toLowerCase() ?? ''] ?? Box
-  return <Icon size={14} />
-}
 
 // ---------------------------------------------------------------------------
 // Internal sidebar item shape (distinct from the context NavItem type)

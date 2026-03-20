@@ -44,7 +44,9 @@ makestack-shell  (Python/FastAPI, port 3000)
 - **Workshops** — organizational containers with module associations, member management, and per-workshop navigation
 - **User profiles** — name, avatar, bio, timezone, locale, activity stats
 - **Version history and diffs** — every catalogue primitive has a full Git history with structured field-level diffs
-- **Module system** — full-stack extensions (Python backend + React frontend) with migrations, SDK, and auto-MCP exposure
+- **Module system** — full-stack extensions (Python backend + React frontend) with migrations, SDK, auto-MCP exposure, and standalone app mode
+- **Standalone app mode** — modules can declare `app_mode` to run as standalone apps with branded sidebars, launched from workshop home cards
+- **Streamlined app install** — browse registries, preview dependencies, install + assign to a workshop in one click
 - **Widget system** — stateless frontend-only keyword renderers; core widgets: `TIMER_`, `MEASUREMENT_`, `MATERIAL_REF_`, `TOOL_REF_`, `TECHNIQUE_REF_`, `IMAGE_`, `LINK_`, `NOTE_`, `CHECKLIST_`
 - **Git-native package manager** — install modules, widget packs, catalogues, data packs, and skills from any Git host
 - **MCP server** — 40+ tools across 10 groups; SSE and stdio transports; transparent action audit logging
@@ -181,21 +183,26 @@ Module API endpoints are automatically exposed as MCP tools when modules are ins
 
 ## Module System
 
-Modules are full-stack extensions: Python backend + optional React frontend + UserDB migrations.
+Modules are full-stack extensions: Python backend + optional React frontend + UserDB migrations. Modules can run as standalone apps with their own branded sidebar, or as traditional views in the shell sidebar.
 
 ```
 my-module/
 ├── makestack-package.json   # type: "module"
-├── manifest.json            # Module contract (keywords, endpoints, tables, views, panels)
+├── manifest.json            # Module contract (keywords, endpoints, tables, views, panels, app_mode)
 ├── backend/
 │   ├── routes.py            # FastAPI router (mounted at /modules/my-module/)
 │   ├── services.py
 │   └── migrations/
 ├── frontend/
+│   ├── index.ts             # registerMyModule() — views, panels, app mode
 │   ├── components/
-│   └── keywords.ts          # Keyword renderer registrations
+│   │   └── MySidebar.tsx    # Custom sidebar (optional, for app mode)
+│   ├── views/
+│   └── panels/
 └── tests/
 ```
+
+**Standalone app mode:** Modules can declare `app_mode` in their manifest to render in a full-screen layout with a branded sidebar. Workshop home shows launcher cards for these modules. The shell chrome (Sidebar, Header) is hidden; a back link returns to the workshop.
 
 **Module SDK surfaces:**
 - `CatalogueClient` — typed proxy to Core
@@ -277,7 +284,7 @@ Full self-description available at `GET /api/capabilities`.
 python3 -m pytest backend/tests/ -x -q
 ```
 
-474 tests across 23 files covering: Core client + cache, UserDB + migrations, all REST routes, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, install transaction rollback, and end-to-end integration.
+487 tests across 24 files covering: Core client + cache, UserDB + migrations, all REST routes, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, install transaction rollback, and end-to-end integration.
 
 ---
 

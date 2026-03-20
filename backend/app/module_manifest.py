@@ -67,6 +67,41 @@ class ModuleView(BaseModel):
         return v
 
 
+class ModuleAppNavItem(BaseModel):
+    """A nav item for a module's standalone app sidebar."""
+
+    id: str                          # matches a view id
+    label: str                       # display label
+    icon: str = ""                   # Lucide icon name
+    route: str                       # registered view route
+    badge_endpoint: str | None = None  # optional API returning { count: N }
+
+
+class ModuleAppTheme(BaseModel):
+    """Theme overrides for a module's standalone app sidebar."""
+
+    sidebar_bg: str = ""             # CSS color for sidebar bg
+    sidebar_text: str = ""           # sidebar text color
+    sidebar_active_bg: str = ""      # active nav item bg
+    accent: str = ""                 # module accent override
+
+
+class ModuleAppMode(BaseModel):
+    """Standalone app mode configuration for a module.
+
+    When enabled, the module renders in its own full-screen layout with a
+    branded sidebar instead of appearing as views in the shell sidebar.
+    """
+
+    enabled: bool = False
+    title: str = ""                  # branding (e.g., "Kitchen")
+    subtitle: str = ""               # (e.g., "Home module")
+    sidebar_width: int = 186
+    home_route: str = ""             # default landing (e.g., "/kitchen")
+    nav_items: list[ModuleAppNavItem] = []
+    theme: ModuleAppTheme | None = None
+
+
 class ModulePanel(BaseModel):
     """A frontend panel registered by a module for the workshop home.
 
@@ -124,6 +159,7 @@ class ModuleManifest(BaseModel):
     dependencies: dict = {}             # {"python": [...], "node": [...]}
     peer_modules: dict = {}             # {"optional": [...], "required": [...]}
     core_api_permissions: list[str] = []
+    app_mode: ModuleAppMode | None = None
     config_defaults: dict = {}
 
     @field_validator("name")

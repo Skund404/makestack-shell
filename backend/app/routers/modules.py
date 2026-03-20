@@ -127,10 +127,13 @@ async def get_module_views(
                 "suggestion": "Use GET /api/modules to list loaded modules",
             },
         )
-    return {
+    result: dict = {
         "views": [v.model_dump() for v in loaded.manifest.views],
         "panels": [p.model_dump() for p in loaded.manifest.panels],
     }
+    if loaded.manifest.app_mode is not None:
+        result["app_mode"] = loaded.manifest.app_mode.model_dump()
+    return result
 
 
 @router.put("/{name}/disable", response_model=InstalledModule, summary="Disable a module")

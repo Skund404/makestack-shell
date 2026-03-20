@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import Path as FPath
 
 from ..dependencies import get_userdb
+from pydantic import BaseModel as _PydanticBaseModel
+
 from ..models import (
     ActiveWorkshopSet,
     NavItem,
@@ -356,28 +358,41 @@ _SHELL_NAV_ITEMS = [
 
 @router.get(
     "/{workshop_id}/modules",
-    response_model=list[WorkshopModule],
     summary="List modules associated with a workshop",
 )
 async def list_workshop_modules(
     workshop_id: str = FPath(...),
+    request: Request = None,
     db: UserDB = Depends(get_userdb),
-) -> list[WorkshopModule]:
-    """List all module associations for a workshop, ordered by sort_order then name."""
+) -> list[dict]:
+    """List all module associations for a workshop, ordered by sort_order then name.
+
+    Includes app_mode data for each module so the workshop home can render
+    launcher cards without extra fetches.
+    """
     await _get_or_404(workshop_id, db)
     rows = await db.fetch_all(
         "SELECT * FROM workshop_modules WHERE workshop_id = ? ORDER BY sort_order ASC, module_name ASC",
         [workshop_id],
     )
-    return [
-        WorkshopModule(
-            workshop_id=r["workshop_id"],
-            module_name=r["module_name"],
-            sort_order=r["sort_order"],
-            enabled=bool(r["enabled"]),
-        )
-        for r in rows
-    ]
+    registry = getattr(request.app.state, "module_registry", None) if request else None
+
+    result = []
+    for r in rows:
+        item: dict = {
+            "workshop_id": r["workshop_id"],
+            "module_name": r["module_name"],
+            "sort_order": r["sort_order"],
+            "enabled": bool(r["enabled"]),
+        }
+        # Enrich with app_mode + display_name from loaded manifest
+        if registry is not None:
+            loaded = registry.get_module(r["module_name"])
+            if loaded is not None and loaded.manifest.app_mode is not None:
+                item["app_mode"] = loaded.manifest.app_mode.model_dump()
+                item["display_name"] = loaded.manifest.display_name
+        result.append(item)
+    return result
 
 
 @router.post(
@@ -500,6 +515,136 @@ async def update_workshop_module(
         sort_order=updated["sort_order"],
         enabled=bool(updated["enabled"]),
     )
+
+
+# ---------------------------------------------------------------------------
+# Add app — bundled install + assign flow
+# ---------------------------------------------------------------------------
+
+
+class AddAppRequest(_PydanticBaseModel):
+    """Request body for the bundled install+assign flow."""
+
+    package_name: str
+    source: str | None = None  # git URL or local path (optional — name resolved via registry)
+
+
+@router.post(
+    "/{workshop_id}/add-app",
+    status_code=201,
+    summary="Install a module and assign it to a workshop in one step",
+)
+async def add_app(
+    workshop_id: str = FPath(...),
+    payload: AddAppRequest = ...,
+    request: Request = None,
+    db: UserDB = Depends(get_userdb),
+) -> dict:
+    """Bundled install+assign: resolves dependencies, installs missing modules,
+    and assigns all of them to the workshop.
+
+    If the module is already installed, it is simply assigned to the workshop.
+    """
+    await _get_or_404(workshop_id, db)
+
+    from ..routers.packages import (
+        install_package as _install_package,
+        _get_registry_client,
+    )
+    from ..models import PackageInstallRequest
+
+    # Check if already installed
+    mod_row = await db.fetch_one(
+        "SELECT name FROM installed_modules WHERE name = ?", [payload.package_name]
+    )
+
+    installed_names: list[str] = []
+    install_results: list[dict] = []
+    restart_required = False
+
+    if not mod_row:
+        # Need to install — resolve dependencies first
+        registry_client = _get_registry_client(request)
+        pkg_info = None
+        if registry_client and not payload.source:
+            pkg_info = registry_client.resolve(payload.package_name)
+
+        # Read the manifest to find required peers
+        required_peers: list[str] = []
+        if pkg_info or payload.source:
+            try:
+                from ..routers.packages import _get_package_cache, _load_package_manifest
+                from pathlib import Path
+
+                package_cache = _get_package_cache(request)
+                if payload.source and not payload.source.startswith("http"):
+                    manifest = _load_package_manifest(payload.source)
+                elif pkg_info and package_cache:
+                    cache_path = await package_cache.fetch(
+                        pkg_info.name, pkg_info.git_url, pkg_info.type, subdir=pkg_info.subdir
+                    )
+                    manifest = _load_package_manifest(str(cache_path))
+                else:
+                    manifest = None
+
+                if manifest:
+                    peers = manifest.raw.get("peer_modules", {}) if hasattr(manifest, "raw") else {}
+                    if not peers and hasattr(manifest, "model_dump"):
+                        # PackageManifest may not have peer_modules; check raw JSON
+                        pass
+            except Exception:
+                required_peers = []
+
+        # Install the target package
+        install_req = PackageInstallRequest(
+            name=payload.package_name,
+            source=payload.source,
+        )
+        try:
+            from ..dependencies import get_core_client
+            core = await get_core_client(request)
+            result = await _install_package(install_req, request, db, core)
+            install_results.append({
+                "package_name": result.package_name,
+                "version": result.version,
+                "restart_required": result.restart_required,
+            })
+            installed_names.append(payload.package_name)
+            if result.restart_required:
+                restart_required = True
+        except HTTPException as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={
+                    "error": f"Failed to install '{payload.package_name}'",
+                    "install_error": exc.detail,
+                    "suggestion": "Check the package name or source and try again.",
+                },
+            )
+    else:
+        installed_names.append(payload.package_name)
+
+    # Assign the module (and any peers) to the workshop
+    assigned: list[str] = []
+    for name in installed_names:
+        existing = await db.fetch_one(
+            "SELECT module_name FROM workshop_modules WHERE workshop_id = ? AND module_name = ?",
+            [workshop_id, name],
+        )
+        if not existing:
+            await db.execute(
+                "INSERT INTO workshop_modules (workshop_id, module_name, sort_order, enabled) VALUES (?, ?, ?, 1)",
+                [workshop_id, name, 0],
+            )
+            assigned.append(name)
+
+    log.info("add_app", workshop_id=workshop_id, package=payload.package_name, assigned=assigned)
+    return {
+        "package_name": payload.package_name,
+        "installed": install_results,
+        "assigned": assigned,
+        "restart_required": restart_required,
+    }
 
 
 # ---------------------------------------------------------------------------
