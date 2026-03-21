@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useQueries } from '@tanstack/react-query'
 import { Loader2, Package, Settings, Link as LinkIcon, Plus } from 'lucide-react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { apiGet } from '@/lib/api'
 import { useWorkshopContext } from '@/context/WorkshopContext'
 import { useWorkshop } from '@/hooks/use-workshops'
@@ -82,15 +82,13 @@ function AppLauncherCard({
   workshopId: string
   workshopName: string
 }) {
-  const navigate = useNavigate()
-
   const handleClick = () => {
     // Store workshop context for the back link in app mode
     try {
       sessionStorage.setItem('app-mode-workshop-id', workshopId)
       sessionStorage.setItem('app-mode-workshop-name', workshopName)
     } catch { /* ignore */ }
-    void navigate({ to: homeRoute as never })
+    window.location.href = homeRoute
   }
 
   return (

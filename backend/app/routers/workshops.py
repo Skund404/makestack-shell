@@ -683,6 +683,10 @@ async def get_workshop_nav(
         if not registry.is_loaded(module_name):
             continue  # silently absent — association row never removed
 
+        loaded = registry.get_module(module_name)
+        if loaded and loaded.manifest.app_mode and loaded.manifest.app_mode.enabled:
+            continue  # app_mode modules use their own branded sidebar — skip shell nav
+
         views = registry.get_module_views(module_name)
         if views:
             # Use declared views, ordered by their sort_order.

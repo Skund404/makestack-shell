@@ -4,7 +4,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
-from backend.app.module_manifest import ModuleView
+from unittest.mock import MagicMock
+
+from backend.app.module_manifest import ModuleAppMode, ModuleManifest, ModuleView
+from backend.app.module_loader import LoadedModule
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +374,71 @@ async def test_nav_default_entry_when_no_views_declared(client: AsyncClient, tes
     assert len(module_items) == 1
     assert module_items[0]["id"] == "no-views-mod"
     assert module_items[0]["route"] == "/modules/no-views-mod"
+
+
+@pytest.mark.asyncio
+async def test_nav_app_mode_module_excluded_from_shell_nav(client: AsyncClient, test_app: FastAPI):
+    """A module with app_mode.enabled=True must NOT appear in the shell sidebar nav.
+    App-mode modules have their own branded sidebar and are launched via the
+    workshop home launcher card — not via the shell nav."""
+    ws_id = await _create_workshop(client)
+    await client.post(f"/api/workshops/{ws_id}/modules", json={"module_name": "kitchen"})
+
+    views = [
+        ModuleView(id="kitchen-home", label="Home", route="/kitchen", icon="Home"),
+        ModuleView(id="kitchen-larder", label="Larder", route="/kitchen/larder", icon="Archive"),
+    ]
+    app_mode = ModuleAppMode(enabled=True, title="Kitchen", home_route="/kitchen")
+
+    manifest = MagicMock(spec=ModuleManifest)
+    manifest.views = views
+    manifest.app_mode = app_mode
+
+    loaded = MagicMock(spec=LoadedModule)
+    loaded.manifest = manifest
+
+    test_app.state.module_registry.is_loaded = lambda name: name == "kitchen"
+    test_app.state.module_registry.get_module = lambda name: loaded if name == "kitchen" else None
+    test_app.state.module_registry.get_module_views = lambda name: views if name == "kitchen" else []
+
+    resp = await client.get(f"/api/workshops/{ws_id}/nav")
+    assert resp.status_code == 200
+
+    items = resp.json()["items"]
+    module_items = [i for i in items if i["source"] == "module"]
+    # App-mode module must be completely absent from shell nav
+    assert len(module_items) == 0
+    kitchen_ids = [i["id"] for i in items if "kitchen" in i.get("id", "")]
+    assert kitchen_ids == [], f"Kitchen views leaked into shell nav: {kitchen_ids}"
+    # Shell fallbacks still present
+    assert any(i["id"] == "inventory" for i in items)
+
+
+@pytest.mark.asyncio
+async def test_nav_non_app_mode_module_still_appears(client: AsyncClient, test_app: FastAPI):
+    """A module with app_mode=None (or disabled) still appears in shell nav as normal."""
+    ws_id = await _create_workshop(client)
+    await client.post(f"/api/workshops/{ws_id}/modules", json={"module_name": "inventory-stock"})
+
+    views = [ModuleView(id="inv-stock", label="Inventory Stock", route="/modules/inventory-stock", icon="Package")]
+
+    manifest = MagicMock(spec=ModuleManifest)
+    manifest.views = views
+    manifest.app_mode = None  # no app mode
+
+    loaded = MagicMock(spec=LoadedModule)
+    loaded.manifest = manifest
+
+    test_app.state.module_registry.is_loaded = lambda name: name == "inventory-stock"
+    test_app.state.module_registry.get_module = lambda name: loaded if name == "inventory-stock" else None
+    test_app.state.module_registry.get_module_views = lambda name: views if name == "inventory-stock" else []
+
+    resp = await client.get(f"/api/workshops/{ws_id}/nav")
+    assert resp.status_code == 200
+
+    module_items = [i for i in resp.json()["items"] if i["source"] == "module"]
+    assert len(module_items) == 1
+    assert module_items[0]["id"] == "inv-stock"
 
 
 @pytest.mark.asyncio

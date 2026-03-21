@@ -5,7 +5,7 @@
  *   Available — installed modules not yet in this workshop (one-click add)
  *   Browse — search registries, preview dependencies, install & assign
  */
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Plus, Check, AlertTriangle, Package } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'

@@ -265,18 +265,40 @@ async def lifespan(app: FastAPI):
             log.error("module_failed", name=fm.name, error=fm.error)
 
     # --- Frontend static files -------------------------------------------
-    # Mounted HERE (after load_modules) so module routes are registered first.
-    # StaticFiles.matches() always returns Match.FULL, so it must come last in
-    # app.routes or it would shadow every route added after create_app() returns.
+    # Added HERE (after load_modules) so module routes are registered first.
+    # Uses an explicit catch-all route instead of StaticFiles(html=True) so
+    # that SPA deep links (e.g. /kitchen) are served correctly — StaticFiles
+    # only serves <subdir>/index.html, not the root index.html as fallback.
     # Only active when the built frontend exists (Docker / production).
     import os as _os
-    from fastapi.staticfiles import StaticFiles as _StaticFiles
-    _frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    from fastapi.responses import FileResponse as _FileResponse
+    _frontend_dist = _os.path.abspath(
+        _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    )
     if _os.path.isdir(_frontend_dist) and not any(
-        getattr(r, "name", None) == "frontend" for r in app.routes
+        getattr(r, "name", None) == "frontend-spa" for r in app.routes
     ):
-        app.mount("/", _StaticFiles(directory=_frontend_dist, html=True), name="frontend")
-        log.info("frontend_static_mounted", path=_frontend_dist)
+        _index_html = _os.path.join(_frontend_dist, "index.html")
+
+        async def _spa_fallback(full_path: str) -> _FileResponse:
+            """Serve real files from dist/ or fall back to index.html for SPA routing."""
+            candidate = _os.path.join(_frontend_dist, full_path)
+            # Prevent path traversal attacks
+            if not _os.path.abspath(candidate).startswith(_frontend_dist + _os.sep) and \
+               candidate != _frontend_dist:
+                candidate = _index_html
+            if _os.path.isfile(candidate):
+                return _FileResponse(candidate)
+            return _FileResponse(_index_html)
+
+        app.add_api_route(
+            "/{full_path:path}",
+            _spa_fallback,
+            methods=["GET"],
+            name="frontend-spa",
+            include_in_schema=False,
+        )
+        log.info("frontend_spa_mounted", path=_frontend_dist)
 
     # Wire module tools into the MCP server now that the registry is built.
     try:

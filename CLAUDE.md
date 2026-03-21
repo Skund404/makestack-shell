@@ -736,6 +736,16 @@ All seven original phases are complete. Post-v0 additions include:
 
 ---
 
+## SPA Routing Fix (2026-03-21)
+
+- **Problem:** `StaticFiles(html=True)` in FastAPI does NOT serve root `index.html` as SPA fallback — it only serves `<subdir>/index.html`. Direct navigation to `/kitchen` returned 404.
+- **Fix:** Replaced `app.mount("/", StaticFiles(html=True))` in `main.py` lifespan with an explicit `/{full_path:path}` GET catch-all route that:
+  1. Serves the real file from `dist/` if it exists (JS/CSS bundles, vite.svg, etc.)
+  2. Otherwise falls back to `dist/index.html` (SPA entry)
+- **Confirmed:** Playwright test shows full user journey works — launcher card → `/kitchen` → Kitchen branded sidebar
+
+---
+
 ## Decisions Made
 
 - **Licensing:** Shell is proprietary (All Rights Reserved). Core is MIT open-source.

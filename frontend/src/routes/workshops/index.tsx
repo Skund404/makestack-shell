@@ -186,7 +186,10 @@ export function WorkshopsIndex() {
                   key={ws.id}
                   workshop={ws}
                   isActive={activeWorkshop?.id === ws.id}
-                  onClick={() => void navigate({ to: '/workshops/detail', search: { id: ws.id } })}
+                  onClick={() => activeWorkshop?.id === ws.id
+                    ? void navigate({ to: '/workshop/$id', params: { id: ws.id } })
+                    : void navigate({ to: '/workshops/detail', search: { id: ws.id } })
+                  }
                   onSetActive={() => switchWorkshop(ws.id)}
                 />
               ))}

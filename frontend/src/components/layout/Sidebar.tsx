@@ -167,9 +167,13 @@ function WorkshopSection() {
     <div>
       <SectionLabel>Workshop</SectionLabel>
       <div className="px-3 py-1.5 flex items-center gap-1.5">
-        <span className="flex-1 text-xs text-text font-medium truncate">
+        <Link
+          to="/workshop/$id"
+          params={{ id: activeWorkshop.id }}
+          className="flex-1 text-xs text-text font-medium truncate hover:text-accent transition-colors"
+        >
           {activeWorkshop.name}
-        </span>
+        </Link>
         <button
           onClick={() => switchWorkshop(null)}
           className="shrink-0 text-text-faint hover:text-text transition-colors rounded p-0.5"
