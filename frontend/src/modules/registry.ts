@@ -18,10 +18,12 @@
 
 // --- BEGIN GENERATED IMPORTS ---
 import { registerKitchenModule } from '@kitchen-frontend'
+import { registerElectronicsModule } from '@electronics-frontend'
 // --- END GENERATED IMPORTS ---
 
 export function registerAllModules(): void {
   // --- BEGIN GENERATED CALLS ---
   registerKitchenModule()
+  registerElectronicsModule()
   // --- END GENERATED CALLS ---
 }

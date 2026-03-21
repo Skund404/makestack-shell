@@ -11,6 +11,7 @@ export default defineConfig({
       // Module frontend aliases — one entry per installed module, auto-generated
       // by scripts/generate_module_registry.py on install/uninstall.
       '@kitchen-frontend': path.resolve(__dirname, '../../makestack-addons/modules/kitchen/frontend'),
+      '@electronics-frontend': path.resolve(__dirname, '../../makestack-addons/modules/electronics/frontend'),
     },
     // Ensure module files outside the project root use the shell's copies of
     // shared packages (React, TanStack, etc.) rather than failing to resolve.
