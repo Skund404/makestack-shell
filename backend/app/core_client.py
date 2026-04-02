@@ -17,6 +17,9 @@ import httpx
 import structlog
 
 from .models import (
+    BinaryRef,
+    BinaryRefCreate,
+    BinaryRefUpdate,
     DiffResponse,
     FieldChange,
     CommitInfo,
@@ -486,3 +489,74 @@ class CatalogueClient:
     async def delete_primitive(self, path: str) -> None:
         """Delete a primitive and its parent directory."""
         await self._request("DELETE", f"primitives/{path}")
+
+    async def fork_primitive(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Primitive:
+        """Fork a primitive into a new independent copy with cloned_from provenance.
+
+        The forked primitive gets a new id/slug/timestamps. All other fields
+        (tags, properties, relationships, steps) are copied from the source.
+        Optionally override the name and description.
+        """
+        payload: dict = {}
+        if name is not None:
+            payload["name"] = name
+        if description is not None:
+            payload["description"] = description
+        # Invalidate list cache so the new fork appears immediately.
+        self._cache.invalidate_prefix("GET:/api/primitives")
+        data = await self._request(
+            "POST",
+            f"primitives/{path}/fork",
+            json=payload or None,
+        )
+        return Primitive(**data)
+
+    # ------------------------------------------------------------------
+    # Binary file references
+    # ------------------------------------------------------------------
+
+    async def list_binary_refs(
+        self,
+        asset_type: str | None = None,
+        primitive_ref: str | None = None,
+    ) -> list[BinaryRef]:
+        """List binary refs, optionally filtered by asset_type or primitive_ref."""
+        params: dict = {}
+        if asset_type:
+            params["asset_type"] = asset_type
+        if primitive_ref:
+            params["primitive_ref"] = primitive_ref
+        data = await self._request("GET", "binary-refs", params=params or None)
+        return [BinaryRef(**item) for item in (data or [])]
+
+    async def get_binary_ref(self, slug: str) -> BinaryRef:
+        """Get a single binary ref by slug."""
+        data = await self._request("GET", f"binary-refs/{slug}")
+        return BinaryRef(**data)
+
+    async def create_binary_ref(self, payload: BinaryRefCreate) -> BinaryRef:
+        """Create a new binary ref."""
+        data = await self._request(
+            "POST",
+            "binary-refs",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return BinaryRef(**data)
+
+    async def update_binary_ref(self, slug: str, payload: BinaryRefUpdate) -> BinaryRef:
+        """Update a binary ref."""
+        data = await self._request(
+            "PUT",
+            f"binary-refs/{slug}",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return BinaryRef(**data)
+
+    async def delete_binary_ref(self, slug: str) -> None:
+        """Delete a binary ref."""
+        await self._request("DELETE", f"binary-refs/{slug}")

@@ -173,3 +173,35 @@ def register_tools(mcp: FastMCP, api: httpx.AsyncClient) -> None:
             return json.dumps(resp.json(), indent=2)
         except Exception as exc:
             return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})
+
+    @mcp.tool()
+    async def fork_primitive(
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> str:
+        """Fork a primitive into a new independent copy with cloned_from provenance tracking.
+
+        The forked primitive gets a new id, a new slug ({original-slug}-fork), and fresh
+        timestamps. All other fields (tags, properties, relationships, steps) are copied from
+        the source. Optionally override the name and description.
+
+        Use this to create recipe variations, project variants, or any other derivative work
+        while preserving the link back to the original via the cloned_from field.
+
+        path: source primitive path, e.g. workflows/sourdough-loaf/manifest.json.
+        name: optional name for the fork (defaults to "{original name} (fork)").
+        description: optional description override.
+
+        Returns the newly created primitive with 201 status.
+        """
+        body: dict = {}
+        if name is not None:
+            body["name"] = name
+        if description is not None:
+            body["description"] = description
+        try:
+            resp = await api.post(f"/api/catalogue/primitives/{path}/fork", json=body or None)
+            return json.dumps(resp.json(), indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "suggestion": "Check that the Shell is running."})

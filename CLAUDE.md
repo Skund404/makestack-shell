@@ -122,8 +122,8 @@ makestack-shell/
 │   │   ├── registry_client.py       # Git-based registry resolver
 │   │   ├── package_cache.py         # Local package cache manager
 │   │   ├── log_broadcast.py         # SSE log fan-out broadcaster
-│   │   ├── routers/                 # 14 FastAPI routers
-│   │   │   ├── catalogue.py         # Core proxy
+│   │   ├── routers/                 # 15 FastAPI routers
+│   │   │   ├── catalogue.py         # Core proxy (incl. /fork route)
 │   │   │   ├── inventory.py         # Hash-pointer inventory
 │   │   │   ├── workshops.py         # Workshop CRUD + members + modules + nav
 │   │   │   ├── settings.py          # Preferences + theme
@@ -136,6 +136,7 @@ makestack-shell/
 │   │   │   ├── backups.py           # UserDB backup management
 │   │   │   ├── terminal.py          # Terminal + log stream (SSE + WebSocket)
 │   │   │   ├── mcp_log.py           # MCP action audit log
+│   │   │   ├── binary_refs.py       # Binary file references (NEW)
 │   │   │   └── dev.py               # Dev-only debugging
 │   │   ├── migrations/              # 7 numbered SQL migrations
 │   │   │   ├── 001_initial_schema.py
@@ -171,8 +172,9 @@ makestack-shell/
 │   ├── transport.py                 # SSE + stdio transport setup
 │   ├── tool_generator.py            # Auto-generates tools from module manifests
 │   ├── __main__.py                  # stdio entry point
-│   └── tools/                       # 10 tool groups, 40+ tools
-│       ├── catalogue.py             # 7 tools
+│   ├── auth.py                      # MCPKeyAuthMiddleware (MAKESTACK_MCP_API_KEY)
+│   └── tools/                       # 11 tool groups, 49+ tools
+│       ├── catalogue.py             # 8 tools (incl. fork_primitive)
 │       ├── inventory.py             # 6 tools
 │       ├── workshops.py             # 8 tools
 │       ├── version.py               # 3 tools
@@ -181,7 +183,8 @@ makestack-shell/
 │       ├── data.py                  # 2 tools
 │       ├── system.py                # 2 tools
 │       ├── mcp_log.py               # 2 tools
-│       └── users.py                 # 3 tools
+│       ├── users.py                 # 3 tools
+│       └── binary_refs.py           # 5 tools (NEW)
 ├── frontend/
 │   ├── src/
 │   │   ├── main.tsx                 # Entry: QueryClient, theme, module registration
@@ -376,11 +379,11 @@ makestack-shell/
 
 ## MCP Server
 
-### Tool Inventory (40+ tools across 10 groups)
+### Tool Inventory (49+ tools across 11 groups)
 
 | Group | Count | Tools |
 |-------|-------|-------|
-| Catalogue | 7 | `search_catalogue`, `list_primitives`, `get_primitive`, `create_primitive`, `update_primitive`, `delete_primitive`, `get_relationships` |
+| Catalogue | 8 | `search_catalogue`, `list_primitives`, `get_primitive`, `create_primitive`, `update_primitive`, `delete_primitive`, `get_relationships`, `fork_primitive` |
 | Inventory | 6 | `add_to_inventory`, `list_inventory`, `get_inventory_item`, `check_inventory_updates`, `update_inventory_pointer`, `remove_from_inventory` |
 | Workshops | 8 | `list_workshops`, `get_workshop`, `create_workshop`, `update_workshop`, `delete_workshop`, `add_to_workshop`, `remove_from_workshop`, `set_active_workshop` |
 | Version | 3 | `get_primitive_history`, `compare_versions`, `get_primitive_at_version` |
@@ -390,12 +393,14 @@ makestack-shell/
 | System | 2 | `get_status`, `get_capabilities` |
 | Users | 3 | `get_user_profile`, `update_user_profile`, `get_user_stats` |
 | MCP Log | 2 | `list_mcp_actions`, `get_daily_summary` |
+| Binary Refs | 5 | `list_binary_refs`, `get_binary_ref`, `create_binary_ref`, `update_binary_ref`, `delete_binary_ref` |
 
 Module API endpoints are automatically exposed as MCP tools via `tool_generator.py` — no hardcoding per module. Tool naming: `{module_name}__{endpoint_name}`.
 
 ### Transport
 - **SSE:** Mounted at `/mcp` in FastAPI, available at `/mcp/sse`
 - **stdio:** `python -m mcp_server` or `makestack mcp`
+- **Streamable HTTP:** Mounted at `/mcp-http` when `MAKESTACK_MCP_API_KEY` is set (see Configuration). Authenticated via `?key=` query param or `Authorization: Bearer` header. Enables static remote MCP access at a stable URL without Cloudflare tunnels or SSE proxying.
 
 ### MCP Logging
 `_LoggingFastMCP` subclass wraps all tool calls, logs to `/api/mcp-log` (tool_name, args, status, affected_paths, session_id). Non-blocking — never breaks tool execution.
@@ -653,6 +658,7 @@ Shell starts even when Core is unreachable:
 | `MAKESTACK_SHELL_URL` | `http://localhost:3000` | MCP server target (stdio mode) |
 | `MAKESTACK_SHELL_TOKEN` | *(none)* | MCP server auth token |
 | `MAKESTACK_MCP_ALLOWED_HOSTS` | *(none)* | Reverse-proxy domains for MCP |
+| `MAKESTACK_MCP_API_KEY` | *(none)* | Enables `/mcp-http` endpoint when set; key is required in `?key=` or `Authorization: Bearer` |
 
 ---
 
@@ -692,7 +698,7 @@ python3 -m pytest backend/tests/ -x -q
 pip install -e ".[dev]"
 ```
 
-**487 tests** across 24 test files covering: Core client + cache, UserDB + migrations, all 14 routers, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, Phase 10 rollback, and end-to-end integration.
+**489 tests** across 24 test files covering: Core client + cache, UserDB + migrations, all 14 routers, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, Phase 10 rollback, and end-to-end integration.
 
 **Test patterns:**
 - In-memory UserDB: `UserDB(":memory:")` + `await db.run_migrations()`
@@ -716,7 +722,7 @@ All seven original phases are complete. Post-v0 additions include:
 - Module frontend system (Phase 8B — view/panel/keyword registries with error boundaries)
 - Production deployment (Hetzner + Cloudflare Tunnel, see HETZNER.md)
 
-**Test suite:** 487 tests, all passing.
+**Test suite:** 489 tests, all passing.
 
 **Post-v0 — Standalone App Mode:**
 - Modules can declare `app_mode` in manifest to run as standalone apps
@@ -726,6 +732,11 @@ All seven original phases are complete. Post-v0 additions include:
 - New endpoints: `POST /api/workshops/{id}/add-app`, `GET /api/packages/{name}/preview`
 - App registry, shared icon resolver, ModuleAppSidebar component
 - Kitchen module: first app-mode module with custom sidebar, Home + Larder views
+
+**Post-v0 — Fork, Binary Refs, Static MCP:**
+- `fork_primitive(path, name?, description?)` — CatalogueClient + MCP tool + Shell route `POST /api/catalogue/primitives/{path}/fork`; proxies to Core's fork endpoint; `cloned_from` returned in all primitive responses
+- Binary file references — `BinaryRefCreate/Update` Pydantic models, `CatalogueClient` methods for all 5 CRUD ops, `backend/app/routers/binary_refs.py` router at `/api/binary-refs/`, 5 MCP tools in `mcp_server/tools/binary_refs.py`
+- Static MCP endpoint — `mcp_server/auth.py` (`MCPKeyAuthMiddleware` using `hmac.compare_digest`), `mcp_server/transport.py` `create_streamable_http_app()`, mounted at `/mcp-http` when `MAKESTACK_MCP_API_KEY` is set
 
 ---
 
@@ -773,6 +784,10 @@ All seven original phases are complete. Post-v0 additions include:
 - Workshop home is the launchpad — launcher cards for app-mode modules, panels below
 - Add App dialog provides a streamlined install+assign flow from workshop home
 - Icon resolution extracted to shared `lib/icons.ts` (both Sidebar and ModuleAppSidebar)
+
+- **Fork:** `POST /api/catalogue/primitives/{path}/fork` proxies to Core's fork endpoint; CatalogueClient invalidates list cache prefix before POST; `cloned_from` is now a field on the `Primitive` model (defaults to `""`)
+- **Binary refs:** separate namespace from primitives; `/api/binary-refs/` router; `BinaryRef`, `BinaryRefCreate`, `BinaryRefUpdate` Pydantic models; 5 CatalogueClient methods; 5 MCP tools; Core indexes synchronously (not via watcher)
+- **Static MCP key auth:** `MCPKeyAuthMiddleware` uses `hmac.compare_digest` (timing-safe); supports `?key=` query param OR `Authorization: Bearer` header; if key is empty or not set, always returns 401; `/mcp-http` is only mounted when `MAKESTACK_MCP_API_KEY` is non-empty
 
 ## Decisions Deferred
 

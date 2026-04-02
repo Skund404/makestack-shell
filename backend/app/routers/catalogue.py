@@ -12,7 +12,7 @@ from fastapi import Path as FPath
 
 from ..core_client import CatalogueClient, CoreNotFoundError, CoreUnavailableError, CoreValidationError
 from ..dependencies import get_core_client
-from ..models import DiffResponse, HistoryResponse, PaginatedList, Primitive, PrimitiveCreate, PrimitiveUpdate, Relationship
+from ..models import DiffResponse, ForkRequest, HistoryResponse, PaginatedList, Primitive, PrimitiveCreate, PrimitiveUpdate, Relationship
 
 log = structlog.get_logger().bind(component="catalogue_router")
 
@@ -265,3 +265,33 @@ async def delete_primitive(
         raise _unavailable(exc.url) from exc
     except CoreNotFoundError:
         raise _not_found(path)
+
+
+@router.post(
+    "/primitives/{path:path}/fork",
+    response_model=Primitive,
+    status_code=201,
+    summary="Fork a primitive",
+)
+async def fork_primitive(
+    path: str = FPath(..., description="Source primitive path"),
+    payload: ForkRequest = ForkRequest(),
+    core: CatalogueClient = Depends(get_core_client),
+) -> Primitive:
+    """Create an independent copy of a primitive with cloned_from provenance.
+
+    The fork gets a new id, slug ({original}-fork), and timestamps. All other
+    fields are copied. Optionally override name and description in the request body.
+    """
+    try:
+        return await core.fork_primitive(
+            path,
+            name=payload.name,
+            description=payload.description,
+        )
+    except CoreUnavailableError as exc:
+        raise _unavailable(exc.url) from exc
+    except CoreNotFoundError:
+        raise _not_found(path)
+    except CoreValidationError as exc:
+        raise _bad_request(exc.message) from exc

@@ -45,6 +45,9 @@ def _load_config() -> dict:
         "userdb_path": os.getenv("MAKESTACK_USERDB_PATH", "~/.makestack/userdb.sqlite"),
         "dev_mode": os.getenv("MAKESTACK_DEV_MODE", "false").lower() in ("true", "1", "yes"),
         "port": int(os.getenv("MAKESTACK_PORT", "3000")),
+        # When set, mounts an authenticated /mcp-http endpoint for remote access.
+        # Usage: https://makestack.yourdomain.com/mcp-http?key=your-secret-key
+        "mcp_api_key": os.getenv("MAKESTACK_MCP_API_KEY", "") or None,
     }
 
 
@@ -312,6 +315,22 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("mcp_module_tools_failed", error=str(exc))
 
+    # --- MCP Streamable HTTP endpoint (authenticated, for remote access) ----
+    # Only mounted when MAKESTACK_MCP_API_KEY is set. Allows connecting via:
+    #   https://makestack.yourdomain.com/mcp-http?key=your-secret-key
+    mcp_api_key = config.get("mcp_api_key")
+    if mcp_api_key:
+        try:
+            from mcp_server.transport import create_streamable_http_app
+            from mcp_server.auth import MCPKeyAuthMiddleware
+
+            raw_mcp_app = create_streamable_http_app()
+            authed_mcp_app = MCPKeyAuthMiddleware(raw_mcp_app, api_key=mcp_api_key)
+            app.mount("/mcp-http", authed_mcp_app)
+            log.info("mcp_http_endpoint_mounted", path="/mcp-http")
+        except Exception as exc:
+            log.warning("mcp_http_endpoint_failed", error=str(exc))
+
     # --- Background tasks -------------------------------------------------
     health_task = asyncio.create_task(_core_health_poll(app))
     backup_task = asyncio.create_task(_daily_backup_loop(app))
@@ -370,7 +389,7 @@ def create_app() -> FastAPI:
     their own overrides before importing.
     """
     # Import routers here to avoid circular imports at module load time.
-    from .routers import backups, catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, terminal, users, version, workshops
+    from .routers import backups, binary_refs, catalogue, data, dev, inventory, mcp_log, modules, packages, settings, system, terminal, users, version, workshops
 
     app = FastAPI(
         title="Makestack Shell",
@@ -414,6 +433,7 @@ def create_app() -> FastAPI:
 
     # Mount routers.
     app.include_router(catalogue.router)
+    app.include_router(binary_refs.router)
     app.include_router(inventory.router)
     app.include_router(workshops.router)
     app.include_router(version.router)

@@ -60,6 +60,7 @@ class Primitive(BaseModel):
     description: str = ""
     tags: list[Any] = Field(default_factory=list)
     properties: dict[str, Any] | None = None
+    cloned_from: str = ""
     parent_project: str = ""
     # Primitives Evolution fields (Core-1, additive — absent from old Core responses).
     domain: str | None = None
@@ -109,6 +110,67 @@ class PrimitiveUpdate(BaseModel):
     subtype: str | None = None
     occurred_at: str | None = None
     status: str | None = None
+
+
+class ForkRequest(BaseModel):
+    """Optional overrides when forking a primitive."""
+
+    name: str | None = None
+    description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Binary file reference models
+# ---------------------------------------------------------------------------
+
+
+class BinaryRef(BaseModel):
+    """A pointer record describing a binary asset stored outside the catalogue."""
+
+    id: str
+    slug: str
+    filename: str
+    mime_type: str = ""
+    size_bytes: int = 0
+    sha256: str = ""
+    local_path: str = ""
+    backup_location: str = ""
+    asset_type: str = ""
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    primitive_ref: str = ""
+    created: str = ""
+    modified: str = ""
+
+
+class BinaryRefCreate(BaseModel):
+    """Request body for creating a binary ref."""
+
+    filename: str
+    mime_type: str = ""
+    size_bytes: int = 0
+    sha256: str = ""
+    local_path: str = ""
+    backup_location: str = ""
+    asset_type: str = ""
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    primitive_ref: str = ""
+
+
+class BinaryRefUpdate(BaseModel):
+    """Request body for updating a binary ref. All fields optional."""
+
+    filename: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+    local_path: str | None = None
+    backup_location: str | None = None
+    asset_type: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    primitive_ref: str | None = None
 
 
 # ---------------------------------------------------------------------------

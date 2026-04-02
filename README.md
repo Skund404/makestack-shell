@@ -49,7 +49,9 @@ makestack-shell  (Python/FastAPI, port 3000)
 - **Streamlined app install** — browse registries, preview dependencies, install + assign to a workshop in one click
 - **Widget system** — stateless frontend-only keyword renderers; core widgets: `TIMER_`, `MEASUREMENT_`, `MATERIAL_REF_`, `TOOL_REF_`, `TECHNIQUE_REF_`, `IMAGE_`, `LINK_`, `NOTE_`, `CHECKLIST_`
 - **Git-native package manager** — install modules, widget packs, catalogues, data packs, and skills from any Git host
-- **MCP server** — 40+ tools across 10 groups; SSE and stdio transports; transparent action audit logging
+- **MCP server** — 49+ tools across 11 groups; SSE, stdio, and static HTTP (key-authenticated) transports; transparent action audit logging
+- **Fork primitives** — `fork_primitive` MCP tool and REST endpoint create an independent copy of any catalogue primitive with `cloned_from` provenance tracking
+- **Binary file references** — git-backed pointer records for photos, videos, models, and documents without LFS; full CRUD via REST and MCP
 - **Export/import** — portable JSON snapshots of personal state (workshops, inventory, preferences)
 - **Backup system** — automated nightly UserDB backups with retention policy, manual backup/restore
 - **Install safety** — transaction tracking with automatic rollback of partial installs
@@ -162,11 +164,18 @@ http://localhost:3000/mcp/sse
 makestack mcp
 ```
 
-### Available Tools (40+)
+**Streamable HTTP transport** (stable remote URL, key-authenticated):
+```
+https://makestack.yourdomain.com/mcp-http?key=your-secret-key
+# or: Authorization: Bearer your-secret-key
+```
+Enabled by setting `MAKESTACK_MCP_API_KEY`. The endpoint is not mounted if the variable is unset.
+
+### Available Tools (49+)
 
 | Group | Tools |
 |-------|-------|
-| Catalogue | `search_catalogue`, `list_primitives`, `get_primitive`, `create_primitive`, `update_primitive`, `delete_primitive`, `get_relationships` |
+| Catalogue | `search_catalogue`, `list_primitives`, `get_primitive`, `create_primitive`, `update_primitive`, `delete_primitive`, `get_relationships`, `fork_primitive` |
 | Version | `get_primitive_history`, `compare_versions`, `get_primitive_at_version` |
 | Inventory | `add_to_inventory`, `list_inventory`, `get_inventory_item`, `check_inventory_updates`, `update_inventory_pointer`, `remove_from_inventory` |
 | Workshops | `list_workshops`, `get_workshop`, `create_workshop`, `update_workshop`, `delete_workshop`, `add_to_workshop`, `remove_from_workshop`, `set_active_workshop` |
@@ -176,8 +185,11 @@ makestack mcp
 | Data | `export_data`, `import_data` |
 | MCP Log | `list_mcp_actions`, `get_daily_summary` |
 | System | `get_status`, `get_capabilities` |
+| Binary Refs | `list_binary_refs`, `get_binary_ref`, `create_binary_ref`, `update_binary_ref`, `delete_binary_ref` |
 
 Module API endpoints are automatically exposed as MCP tools when modules are installed — no extra code required.
+
+**Static MCP endpoint:** Set `MAKESTACK_MCP_API_KEY` to enable a key-authenticated Streamable HTTP MCP endpoint at `/mcp-http`. Accepts the key via `?key=` query parameter or `Authorization: Bearer` header. Useful for remote MCP access at a stable URL: `https://makestack.yourdomain.com/mcp-http?key=your-secret`.
 
 ---
 
@@ -266,6 +278,7 @@ All endpoints return typed JSON. List endpoints include pagination metadata (`to
 | Settings | `/api/settings/` |
 | Modules | `/api/modules/` |
 | Packages & Registries | `/api/packages/`, `/api/registries/` |
+| Binary File References | `/api/binary-refs/` |
 | Data (export/import) | `/api/data/` |
 | Backups | `/api/backups/` |
 | Terminal & Logs | `/api/terminal/` |
@@ -284,7 +297,7 @@ Full self-description available at `GET /api/capabilities`.
 python3 -m pytest backend/tests/ -x -q
 ```
 
-487 tests across 24 files covering: Core client + cache, UserDB + migrations, all REST routes, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, install transaction rollback, and end-to-end integration.
+489 tests across 24 files covering: Core client + cache, UserDB + migrations, all REST routes, module manifest validation, module SDK, module loader, package management, registry client, package cache, installers, MCP server, MCP logging, terminal/logs, backups, workshop modules, install transaction rollback, and end-to-end integration.
 
 ---
 
@@ -302,6 +315,7 @@ python3 -m pytest backend/tests/ -x -q
 | `MAKESTACK_SHELL_URL` | `http://localhost:3000` | MCP server target (stdio mode) |
 | `MAKESTACK_SHELL_TOKEN` | *(none)* | MCP server auth token |
 | `MAKESTACK_MCP_ALLOWED_HOSTS` | *(none)* | Reverse-proxy domains for MCP |
+| `MAKESTACK_MCP_API_KEY` | *(none)* | Enables `/mcp-http` Streamable HTTP endpoint when set; required in `?key=` or `Authorization: Bearer` |
 
 ---
 

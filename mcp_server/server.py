@@ -30,7 +30,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import TransportSecuritySettings
 
-from .tools import catalogue, data, inventory, mcp_log, modules, settings, system, users, version, workshops
+from .tools import binary_refs, catalogue, data, inventory, mcp_log, modules, settings, system, users, version, workshops
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +197,7 @@ def create_server(api_client: httpx.AsyncClient | None = None) -> _LoggingFastMC
 
     # Register tool groups — order doesn't matter for MCP but keep it logical.
     catalogue.register_tools(mcp, api_client)
+    binary_refs.register_tools(mcp, api_client)
     inventory.register_tools(mcp, api_client)
     workshops.register_tools(mcp, api_client)
     version.register_tools(mcp, api_client)
